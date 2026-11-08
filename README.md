@@ -198,12 +198,12 @@ Example [niri](https://github.com/YaLTeR/niri) binding for a floating controls
 window:
 
 ```kdl
-Mod+M { spawn-sh "ghostty --class=music-controls -e $HOME/.cargo/bin/music controls"; }
+Mod+M { spawn-sh "~/.config/niri/focus-or-spawn.sh com.mitchellh.ghostty.music ghostty --class=com.mitchellh.ghostty.music -e $HOME/.cargo/bin/music controls"; }
 ```
 
 ```kdl
 window-rule {
-    match app-id=r#"^music-controls$"#
+    match app-id=r#"^com\.mitchellh\.ghostty\.music$"#
     open-floating true
     default-column-width { proportion 0.7; }
     default-window-height { proportion 0.55; }
