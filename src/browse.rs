@@ -8,6 +8,15 @@ use crate::mount;
 use crate::player;
 
 pub fn browse(config: &Config) -> Result<()> {
+    match pick(config, true)? {
+        Some(paths) => play_paths(config, &paths),
+        None => Ok(()),
+    }
+}
+
+/// Picker shared by the CLI and the TUI. Returns None if the user cancels.
+/// `include_all` adds the "[shuffle all]" entry (play mode, not add mode).
+pub fn pick(config: &Config, include_all: bool) -> Result<Option<Vec<PathBuf>>> {
     mount::ensure_mount(config)?;
 
     let artists = list_dirs(&config.music_dir)?;
@@ -15,7 +24,10 @@ pub fn browse(config: &Config) -> Result<()> {
         bail!("no artists found under {}", config.music_dir.display());
     }
 
-    let mut artist_choices = vec!["[shuffle all]".to_string()];
+    let mut artist_choices = Vec::new();
+    if include_all {
+        artist_choices.push("[shuffle all]".to_string());
+    }
     artist_choices.extend(artists.iter().filter_map(|path| {
         path.file_name()
             .map(|name| name.to_string_lossy().into_owned())
@@ -31,17 +43,17 @@ pub fn browse(config: &Config) -> Result<()> {
         ],
     )?;
     let Some(artist) = picked.into_iter().next() else {
-        return Ok(());
+        return Ok(None);
     };
 
     if artist == "[shuffle all]" {
-        return player::load_directory(config, &config.music_dir, true);
+        return Ok(Some(vec![config.music_dir.clone()]));
     }
 
     let artist_path = config.music_dir.join(&artist);
     let albums = list_dirs(&artist_path)?;
     if albums.is_empty() {
-        return player::load_replace(config, &[artist_path], false);
+        return Ok(Some(vec![artist_path]));
     }
 
     let mut album_choices = vec!["[whole artist]".to_string()];
@@ -61,7 +73,7 @@ pub fn browse(config: &Config) -> Result<()> {
         ],
     )?;
     if picks.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
 
     let paths: Vec<PathBuf> = picks
@@ -75,7 +87,16 @@ pub fn browse(config: &Config) -> Result<()> {
         })
         .collect();
 
-    player::load_replace(config, &paths, false)
+    Ok(Some(paths))
+}
+
+/// Play a previous picker selection. A single music_dir means "shuffle all".
+pub fn play_paths(config: &Config, paths: &[PathBuf]) -> Result<()> {
+    if paths.len() == 1 && paths[0] == config.music_dir {
+        player::load_directory(config, &config.music_dir, true)
+    } else {
+        player::load_replace(config, paths, false)
+    }
 }
 
 fn list_dirs(path: &std::path::Path) -> Result<Vec<PathBuf>> {

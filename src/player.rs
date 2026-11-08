@@ -149,15 +149,24 @@ pub fn add(config: &Config, inputs: &[String]) -> Result<()> {
     if inputs.is_empty() {
         bail!("usage: music add PATH...");
     }
-    mount::ensure_mount(config)?;
-    mpv::ensure_daemon(config)?;
-
     let paths = inputs
         .iter()
         .map(|input| queue::resolve_path(config, input))
         .collect::<Result<Vec<_>>>()?;
-    let (playlist, _count) = queue::build_playlist(config, &paths)?;
+    append_paths(config, &paths)?;
+    println!("queued {} path(s)", inputs.len());
+    Ok(())
+}
 
+/// Append already-resolved paths to the queue (used by `add` and the TUI).
+pub fn append_paths(config: &Config, paths: &[PathBuf]) -> Result<()> {
+    if paths.is_empty() {
+        bail!("nothing to add");
+    }
+    mount::ensure_mount(config)?;
+    mpv::ensure_daemon(config)?;
+
+    let (playlist, _count) = queue::build_playlist(config, paths)?;
     let result = (|| -> Result<()> {
         let mut client = Mpv::connect(&config.socket)?;
         client.command_values(vec![
@@ -169,10 +178,7 @@ pub fn add(config: &Config, inputs: &[String]) -> Result<()> {
         Ok(())
     })();
     let _ = std::fs::remove_file(&playlist);
-    result?;
-
-    println!("queued {} path(s)", inputs.len());
-    Ok(())
+    result
 }
 
 fn wait_playing(client: &mut Mpv) {

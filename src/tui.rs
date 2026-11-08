@@ -9,6 +9,7 @@ use serde_json::json;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use crate::browse;
 use crate::config::Config;
 use crate::mount;
 use crate::mpv::{self, Mpv, PlaylistEntry, Repeat, Status};
@@ -18,6 +19,12 @@ use crate::player;
 enum View {
     NowPlaying,
     Queue,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pending {
+    Play,
+    Add,
 }
 
 pub fn run(config: &Config) -> Result<()> {
@@ -55,6 +62,7 @@ struct App {
     mounted: bool,
     last_poll: Instant,
     message: Option<(String, Instant)>,
+    pending: Option<Pending>,
     quit: bool,
 }
 
@@ -72,6 +80,7 @@ impl App {
             list_state: ListState::default(),
             last_poll: Instant::now() - Duration::from_secs(1),
             message: None,
+            pending: None,
             quit: false,
         };
         app.refresh();
@@ -88,6 +97,10 @@ impl App {
                     Event::Resize(_, _) => {}
                     _ => {}
                 }
+            }
+
+            if let Some(action) = self.pending.take() {
+                self.run_pending(terminal, action)?;
             }
 
             if self.last_poll.elapsed() >= Duration::from_millis(100) {
@@ -241,6 +254,14 @@ impl App {
                 self.view = View::NowPlaying;
                 return;
             }
+            KeyCode::Char('b') => {
+                self.pending = Some(Pending::Play);
+                return;
+            }
+            KeyCode::Char('a') => {
+                self.pending = Some(Pending::Add);
+                return;
+            }
             _ => {}
         }
 
@@ -367,6 +388,49 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// Suspend the TUI, run the fzf picker, then rebuild the terminal.
+    fn run_pending(
+        &mut self,
+        terminal: &mut ratatui::DefaultTerminal,
+        action: Pending,
+    ) -> Result<()> {
+        ratatui::restore();
+
+        let result = (|| -> Result<Option<&'static str>> {
+            match action {
+                Pending::Play => {
+                    if let Some(paths) = browse::pick(&self.config, true)? {
+                        browse::play_paths(&self.config, &paths)?;
+                        Ok(Some("playing new selection"))
+                    } else {
+                        Ok(None)
+                    }
+                }
+                Pending::Add => {
+                    if let Some(paths) = browse::pick(&self.config, false)? {
+                        player::append_paths(&self.config, &paths)?;
+                        Ok(Some("added to queue"))
+                    } else {
+                        Ok(None)
+                    }
+                }
+            }
+        })();
+
+        *terminal = ratatui::try_init().context("reinitializing terminal")?;
+        terminal.clear()?;
+
+        match result {
+            Ok(Some(message)) => {
+                self.show_message(message.to_string());
+                self.refresh();
+            }
+            Ok(None) => {}
+            Err(error) => self.show_message(format!("{error}")),
+        }
+        Ok(())
     }
 
     fn draw(&mut self, frame: &mut Frame) {
@@ -541,7 +605,7 @@ impl App {
         frame.render_stateful_widget(list, chunks[1], &mut self.list_state);
 
         let help = vec![
-            Line::from("↑/↓ or j/k move   PgUp/PgDn   Enter play   Tab/Esc back"),
+            Line::from("↑/↓/j/k move   PgUp/PgDn   Enter play   b play   a add   Tab back"),
             Line::from("q detach   Q quit mpv"),
         ];
         frame.render_widget(Paragraph::new(help), chunks[2]);
@@ -552,12 +616,12 @@ impl App {
         let help = if area.width >= 70 {
             vec![
                 Line::from("space pause   n/p next/prev   ←/→ seek 10s   ↑/↓ volume 5"),
-                Line::from("s shuffle   r repeat   m mute   Tab queue   q detach   Q quit"),
+                Line::from("b play   a add   s shuffle   r repeat   m mute   Tab queue   q/Q"),
             ]
         } else {
             vec![
-                Line::from("space n/p ←/→ ↑/↓ s r m"),
-                Line::from("Tab queue   q detach   Q quit"),
+                Line::from("space n/p ←/→ ↑/↓ b a"),
+                Line::from("s r m Tab queue   q detach   Q quit"),
             ]
         };
         frame.render_widget(
@@ -693,6 +757,7 @@ mod layout_fuzz_tests {
                 } else {
                     None
                 },
+                pending: None,
                 quit: false,
             };
 

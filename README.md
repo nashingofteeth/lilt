@@ -89,7 +89,12 @@ detached mpv daemon and exits, so the picker window closes immediately.
 - **Now Playing** — artist/album, title, progress bar, time, volume,
   shuffle/repeat, queue position.
 - **Queue** (`Tab`) — the whole playlist with the current track marked;
-  `↑/↓` or `j/k`, `PgUp/PgDn`, `g/G`, `Enter` to play, `Tab`/`Esc` to go back.
+  `↑/↓` or `j/k`, `PgUp/PgDn`, `g/G`, `Enter` to switch to a track,
+  `Tab`/`Esc` to go back.
+- **Browse actions** — `b` opens the fzf artist/album picker and replaces the
+  queue (switch what's playing); `a` opens it and appends the selection to the
+  queue. The picker temporarily takes over the terminal, then returns to the
+  panel.
 
 | Key | Action |
 | --- | --- |
@@ -100,6 +105,8 @@ detached mpv daemon and exits, so the picker window closes immediately.
 | `s` | toggle shuffle |
 | `r` | cycle repeat (off → all → one) |
 | `m` | mute |
+| `b` | browse library → play now (replace queue) |
+| `a` | browse library → add to queue |
 | `Tab` | queue view |
 | `q` | detach (playback continues) |
 | `Q` | quit mpv |
