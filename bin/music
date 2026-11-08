@@ -35,6 +35,7 @@ MPV_PID="$CACHE_DIR/mpv.pid"
 #  - prefetch/open the next playlist entry before the current one ends
 #  - 0.5s audio buffer to bridge the network open
 #  - larger demux cache/readahead so the next file is ready early
+#  - never open external cover art (audio-only)
 MPV_ARGS=(
     --idle=yes
     --no-video
@@ -47,6 +48,7 @@ MPV_ARGS=(
     --prefetch-playlist=yes
     --audio-buffer=0.5
     --audio-display=no
+    --cover-art-auto=no
     --no-resume-playback
     --save-position-on-quit=no
     --cache=yes

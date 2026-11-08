@@ -119,6 +119,7 @@ how fast the next file can be opened. mpv is started with:
 - `--prefetch-playlist=yes` — open the next playlist entry before the current one ends
 - `--audio-buffer=0.5` — buffer enough audio to cover the network open
 - `--demuxer-max-bytes=256MiB --demuxer-readahead-secs=30` — keep the next file ready early
+- `--cover-art-auto=no` — don't open sidecar cover images (`cover.jpg`, etc.) at all
 
 These are intentionally mpv-only: no rclone disk cache, so playback starts
 immediately and nothing is written to a cache directory. If a particular album
