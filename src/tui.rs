@@ -4,7 +4,10 @@ use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, Ke
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Gauge, List, ListItem, ListState, Padding, Paragraph, Wrap};
+use ratatui::widgets::{
+    Bar, BarChart, BarGroup, Block, Clear, Gauge, List, ListItem, ListState, Padding, Paragraph,
+    Wrap,
+};
 use serde_json::json;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -14,9 +17,10 @@ use crate::config::Config;
 use crate::mount;
 use crate::mpv::{self, Mpv, PlaylistEntry, Repeat, Status};
 use crate::player;
+use crate::visualizer::Visualizer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum View {
+enum Focus {
     NowPlaying,
     Queue,
 }
@@ -45,6 +49,7 @@ pub fn run(config: &Config) -> Result<()> {
         old_hook(info);
     }));
 
+    app.start_visualizer();
     let result = app.event_loop(&mut terminal);
     ratatui::restore();
     result
@@ -78,7 +83,7 @@ struct App {
     config: Config,
     mpv: Option<Mpv>,
     status: Status,
-    view: View,
+    focus: Focus,
     playlist: Vec<PlaylistEntry>,
     items: Vec<String>,
     list_state: ListState,
@@ -91,6 +96,8 @@ struct App {
     filtered: Vec<usize>,
     help_visible: bool,
     pending_g: Option<Instant>,
+    visualizer: Option<Visualizer>,
+    visualizer_enabled: bool,
     quit: bool,
 }
 
@@ -102,7 +109,7 @@ impl App {
             config,
             mpv,
             status: Status::default(),
-            view: View::NowPlaying,
+            focus: Focus::NowPlaying,
             playlist: Vec::new(),
             items: Vec::new(),
             list_state: ListState::default(),
@@ -114,6 +121,8 @@ impl App {
             filtered: Vec::new(),
             help_visible: false,
             pending_g: None,
+            visualizer: None,
+            visualizer_enabled: true,
             quit: false,
         };
         app.refresh();
@@ -124,7 +133,12 @@ impl App {
         loop {
             terminal.draw(|frame| self.draw(frame))?;
 
-            if event::poll(Duration::from_millis(100))? {
+            let timeout = if self.visualizer_enabled && self.visualizer.is_some() {
+                Duration::from_millis(33)
+            } else {
+                Duration::from_millis(100)
+            };
+            if event::poll(timeout)? {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => self.handle_key(key),
                     Event::Resize(_, _) => {}
@@ -176,10 +190,9 @@ impl App {
             self.status = Status::default();
         }
 
-        if self.view == View::Queue
-            && (self.playlist.is_empty()
-                || previous_count != self.status.playlist_count
-                || previous_pos != self.status.playlist_pos)
+        if self.playlist.is_empty()
+            || previous_count != self.status.playlist_count
+            || previous_pos != self.status.playlist_pos
         {
             self.reload_playlist();
         }
@@ -194,6 +207,9 @@ impl App {
             self.playlist = entries;
             self.rebuild_items();
             self.apply_filter();
+            if self.focus == Focus::NowPlaying {
+                self.select_current();
+            }
         }
     }
 
@@ -340,7 +356,7 @@ impl App {
                 return;
             }
             KeyCode::Tab => {
-                self.toggle_view();
+                self.toggle_focus();
                 return;
             }
             KeyCode::Char('?') => {
@@ -367,12 +383,56 @@ impl App {
                 self.goto_last();
                 return;
             }
+            KeyCode::Char('v') if !ctrl => {
+                self.toggle_visualizer();
+                return;
+            }
+            KeyCode::Char(' ') => {
+                self.toggle_pause();
+                return;
+            }
+            KeyCode::Char('n') if !ctrl => {
+                self.next_track();
+                return;
+            }
+            KeyCode::Char('p') if !ctrl => {
+                self.prev_track();
+                return;
+            }
+            KeyCode::Char('h') if !ctrl => {
+                self.seek_relative(-10.0);
+                return;
+            }
+            KeyCode::Char('l') if !ctrl => {
+                self.seek_relative(10.0);
+                return;
+            }
+            KeyCode::Char('+') | KeyCode::Char('=') if !ctrl => {
+                self.adjust_volume(5.0);
+                return;
+            }
+            KeyCode::Char('-') | KeyCode::Char('_') if !ctrl => {
+                self.adjust_volume(-5.0);
+                return;
+            }
+            KeyCode::Char('s') if !ctrl => {
+                self.cycle_shuffle();
+                return;
+            }
+            KeyCode::Char('r') if !ctrl => {
+                self.cycle_repeat();
+                return;
+            }
+            KeyCode::Char('m') if !ctrl => {
+                self.cycle_mute();
+                return;
+            }
             _ => {}
         }
 
-        match self.view {
-            View::NowPlaying => self.handle_now_playing(key),
-            View::Queue => self.handle_queue(key),
+        match self.focus {
+            Focus::NowPlaying => self.handle_now_playing(key),
+            Focus::Queue => self.handle_queue(key),
         }
     }
 
@@ -387,6 +447,10 @@ impl App {
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.filter_query.clear();
                 self.apply_filter();
+            }
+            KeyCode::Tab => {
+                self.filter_editing = false;
+                self.toggle_focus();
             }
             KeyCode::Char(character)
                 if !key.modifiers.contains(KeyModifiers::CONTROL)
@@ -406,28 +470,22 @@ impl App {
     }
 
     fn open_filter(&mut self) {
-        if self.view == View::NowPlaying {
-            self.view = View::Queue;
+        if self.playlist.is_empty() {
             self.reload_playlist();
         }
+        self.focus = Focus::Queue;
         self.filter_query.clear();
         self.filter_editing = true;
         self.apply_filter();
     }
 
-    fn toggle_view(&mut self) {
-        self.view = match self.view {
-            View::NowPlaying => View::Queue,
-            View::Queue => View::NowPlaying,
+    fn toggle_focus(&mut self) {
+        self.focus = match self.focus {
+            Focus::NowPlaying => Focus::Queue,
+            Focus::Queue => Focus::NowPlaying,
         };
         self.filter_editing = false;
-        if self.view == View::Queue {
-            self.reload_playlist();
-            self.select_current();
-        } else {
-            self.filter_query.clear();
-            self.apply_filter();
-        }
+        self.pending_g = None;
     }
 
     fn quit_mpv(&mut self) {
@@ -444,24 +502,24 @@ impl App {
     }
 
     fn goto_first(&mut self) {
-        match self.view {
-            View::Queue => {
+        match self.focus {
+            Focus::Queue => {
                 if !self.filtered.is_empty() {
                     self.list_state.select(Some(0));
                 }
             }
-            View::NowPlaying => self.play_index(0),
+            Focus::NowPlaying => self.play_index(0),
         }
     }
 
     fn goto_last(&mut self) {
-        match self.view {
-            View::Queue => {
+        match self.focus {
+            Focus::Queue => {
                 if !self.filtered.is_empty() {
                     self.list_state.select(Some(self.filtered.len() - 1));
                 }
             }
-            View::NowPlaying => {
+            Focus::NowPlaying => {
                 self.act(|client| {
                     let count = client
                         .get("playlist-count")
@@ -480,84 +538,99 @@ impl App {
 
     fn handle_now_playing(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Char(' ') => {
-                self.act(|client| client.command(&["cycle", "pause"]));
-            }
-            KeyCode::Char('n') | KeyCode::Char('j') => {
-                self.act(|client| {
-                    if client.command(&["playlist-next"]).is_err() {
-                        let _ = client.command_values(vec![json!("playlist-play-index"), json!(0)]);
-                    }
-                    Ok(())
-                });
-            }
-            KeyCode::Char('p') | KeyCode::Char('k') => {
-                self.act(|client| {
-                    if client.command(&["playlist-prev"]).is_err() {
-                        let count = client
-                            .get("playlist-count")
-                            .ok()
-                            .and_then(|value| value.as_i64())
-                            .unwrap_or(0);
-                        if count > 0 {
-                            let _ = client.command_values(vec![
-                                json!("playlist-play-index"),
-                                json!(count - 1),
-                            ]);
-                        }
-                    }
-                    Ok(())
-                });
-            }
-            KeyCode::Left | KeyCode::Char('h') => {
-                self.act(|client| {
-                    client.command_values(vec![json!("seek"), json!(-10.0), json!("relative")])?;
-                    Ok(())
-                });
-            }
-            KeyCode::Right | KeyCode::Char('l') => {
-                self.act(|client| {
-                    client.command_values(vec![json!("seek"), json!(10.0), json!("relative")])?;
-                    Ok(())
-                });
-            }
-            KeyCode::Up | KeyCode::Char('+') | KeyCode::Char('=') => {
-                self.act(|client| {
-                    client.command_values(vec![json!("add"), json!("volume"), json!(5.0)])?;
-                    Ok(())
-                });
-            }
-            KeyCode::Down | KeyCode::Char('-') | KeyCode::Char('_') => {
-                self.act(|client| {
-                    client.command_values(vec![json!("add"), json!("volume"), json!(-5.0)])?;
-                    Ok(())
-                });
-            }
-            KeyCode::Char('s') => {
-                self.act(|client| client.command(&["cycle", "shuffle"]));
-            }
-            KeyCode::Char('r') => {
-                self.act(|client| {
-                    let current = client.status()?.repeat;
-                    let next = match current {
-                        Repeat::Off => Repeat::All,
-                        Repeat::All => Repeat::One,
-                        Repeat::One => Repeat::Off,
-                    };
-                    player::set_repeat(client, next)
-                });
-            }
-            KeyCode::Char('m') => {
-                self.act(|client| client.command(&["cycle", "mute"]));
-            }
+            KeyCode::Char('j') => self.next_track(),
+            KeyCode::Char('k') => self.prev_track(),
+            KeyCode::Left => self.seek_relative(-10.0),
+            KeyCode::Right => self.seek_relative(10.0),
+            KeyCode::Up => self.adjust_volume(5.0),
+            KeyCode::Down => self.adjust_volume(-5.0),
             _ => {}
+        }
+    }
+
+    fn toggle_pause(&mut self) {
+        self.act(|client| client.command(&["cycle", "pause"]));
+    }
+
+    fn next_track(&mut self) {
+        self.act(|client| {
+            if client.command(&["playlist-next"]).is_err() {
+                let _ = client.command_values(vec![json!("playlist-play-index"), json!(0)]);
+            }
+            Ok(())
+        });
+    }
+
+    fn prev_track(&mut self) {
+        self.act(|client| {
+            if client.command(&["playlist-prev"]).is_err() {
+                let count = client
+                    .get("playlist-count")
+                    .ok()
+                    .and_then(|value| value.as_i64())
+                    .unwrap_or(0);
+                if count > 0 {
+                    let _ =
+                        client.command_values(vec![json!("playlist-play-index"), json!(count - 1)]);
+                }
+            }
+            Ok(())
+        });
+    }
+
+    fn seek_relative(&mut self, seconds: f64) {
+        self.act(move |client| {
+            client.command_values(vec![json!("seek"), json!(seconds), json!("relative")])?;
+            Ok(())
+        });
+    }
+
+    fn adjust_volume(&mut self, delta: f64) {
+        self.act(move |client| {
+            client.command_values(vec![json!("add"), json!("volume"), json!(delta)])?;
+            Ok(())
+        });
+    }
+
+    fn cycle_shuffle(&mut self) {
+        self.act(|client| client.command(&["cycle", "shuffle"]));
+    }
+
+    fn cycle_repeat(&mut self) {
+        self.act(|client| {
+            let current = client.status()?.repeat;
+            let next = match current {
+                Repeat::Off => Repeat::All,
+                Repeat::All => Repeat::One,
+                Repeat::One => Repeat::Off,
+            };
+            player::set_repeat(client, next)
+        });
+    }
+
+    fn cycle_mute(&mut self) {
+        self.act(|client| client.command(&["cycle", "mute"]));
+    }
+
+    fn start_visualizer(&mut self) {
+        if self.visualizer_enabled && self.visualizer.is_none() {
+            self.visualizer = Some(Visualizer::start());
+        }
+    }
+
+    fn toggle_visualizer(&mut self) {
+        self.visualizer_enabled = !self.visualizer_enabled;
+        if self.visualizer_enabled {
+            self.visualizer = Some(Visualizer::start());
+        } else {
+            self.visualizer = None;
         }
     }
 
     fn handle_queue(&mut self, key: KeyEvent) {
         if key.code == KeyCode::Esc {
             if self.filter_query.is_empty() {
-                self.view = View::NowPlaying;
+                self.focus = Focus::NowPlaying;
             } else {
                 self.clear_filter();
             }
@@ -609,8 +682,6 @@ impl App {
             KeyCode::Enter => {
                 let actual = self.filtered[selected] as i64;
                 self.play_index(actual);
-                self.view = View::NowPlaying;
-                self.clear_filter();
             }
             _ => {}
         }
@@ -669,32 +740,51 @@ impl App {
             return;
         }
 
-        let block = Block::bordered()
-            .title(" music ")
-            .padding(Padding::horizontal(1));
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-
-        match self.view {
-            View::NowPlaying => self.draw_now_playing(frame, inner),
-            View::Queue => self.draw_queue(frame, inner),
+        let show_visualizer = self.visualizer_enabled && area.height >= 20;
+        let mut constraints = vec![Constraint::Length(6)];
+        if show_visualizer {
+            constraints.push(Constraint::Length(if area.height >= 30 { 8 } else { 5 }));
         }
+        constraints.push(Constraint::Min(3));
+        constraints.push(Constraint::Length(2));
+        constraints.push(Constraint::Length(1));
+        let chunks = Layout::vertical(constraints).split(area);
+
+        let now_index = 0;
+        let viz_index = if show_visualizer { Some(1) } else { None };
+        let queue_index = if show_visualizer { 2 } else { 1 };
+        let help_index = queue_index + 1;
+        let message_index = help_index + 1;
+
+        self.draw_now_playing(frame, chunks[now_index]);
+        if let Some(index) = viz_index {
+            self.draw_spectrum_pane(frame, chunks[index]);
+        }
+        self.draw_queue(frame, chunks[queue_index]);
+        self.draw_help(frame, chunks[help_index]);
+        self.draw_message(frame, chunks[message_index]);
 
         if self.help_visible {
             self.draw_help_overlay(frame, area);
         }
     }
 
-    fn draw_now_playing(&mut self, frame: &mut Frame, area: ratatui::layout::Rect) {
-        let chunks = Layout::vertical([
-            Constraint::Length(3),
-            Constraint::Length(3),
+    fn draw_now_playing(&mut self, frame: &mut Frame, area: Rect) {
+        let focused = self.focus == Focus::NowPlaying;
+        let block = Block::bordered()
+            .title(" now playing ")
+            .border_style(border_style(focused))
+            .padding(Padding::horizontal(1));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+
+        let lines = Layout::vertical([
             Constraint::Length(1),
-            Constraint::Min(0),
-            Constraint::Length(2),
+            Constraint::Length(1),
+            Constraint::Length(1),
             Constraint::Length(1),
         ])
-        .split(area);
+        .split(inner);
 
         let context = if self.status.artist.is_empty() && self.status.album.is_empty() {
             "mpv".to_string()
@@ -717,19 +807,22 @@ impl App {
             title_text.to_string()
         };
 
-        let header = Paragraph::new(vec![
-            Line::from(Span::styled(
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
                 context,
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
-            )),
-            Line::from(Span::styled(
+            ))),
+            lines[0],
+        );
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
                 title,
                 Style::default().add_modifier(Modifier::BOLD),
-            )),
-        ]);
-        frame.render_widget(header, chunks[0]);
+            ))),
+            lines[1],
+        );
 
         let ratio = match (self.status.time_pos, self.status.duration) {
             (Some(position), Some(duration)) if duration > 0.0 => {
@@ -752,11 +845,10 @@ impl App {
             .bg(Color::Cyan)
             .add_modifier(Modifier::BOLD);
         let gauge = Gauge::default()
-            .block(Block::bordered().title("progress"))
             .gauge_style(Style::default().fg(Color::Cyan))
             .ratio(ratio)
             .label(Span::styled(label, label_style));
-        frame.render_widget(gauge, chunks[1]);
+        frame.render_widget(gauge, lines[2]);
 
         let queue = if self.status.playlist_count > 0 && self.status.playlist_pos >= 0 {
             format!(
@@ -784,79 +876,76 @@ impl App {
         );
         frame.render_widget(
             Paragraph::new(state).style(Style::default().fg(Color::DarkGray)),
-            chunks[2],
+            lines[3],
         );
-
-        if !self.mounted {
-            let warning = Paragraph::new("library not mounted — run `music mount`")
-                .style(Style::default().fg(Color::Yellow))
-                .alignment(Alignment::Center);
-            frame.render_widget(warning, chunks[3]);
-        } else if self.status.idle && self.status.media_title.is_empty() {
-            let hint = Paragraph::new("queue empty — `music play` or Tab for the queue")
-                .style(Style::default().fg(Color::DarkGray))
-                .alignment(Alignment::Center);
-            frame.render_widget(hint, chunks[3]);
-        }
-
-        self.draw_help(frame, chunks[4]);
-        self.draw_message(frame, chunks[5]);
     }
 
-    fn draw_queue(&mut self, frame: &mut Frame, area: ratatui::layout::Rect) {
-        let chunks = Layout::vertical([
-            Constraint::Length(1), // header
-            Constraint::Length(1), // filter prompt
-            Constraint::Min(0),    // list
-            Constraint::Length(2), // help
-            Constraint::Length(1), // message
-        ])
-        .split(area);
+    fn draw_spectrum_pane(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::bordered()
+            .title(" spectrum ")
+            .border_style(Style::default().fg(Color::DarkGray))
+            .padding(Padding::horizontal(1));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
 
-        let header = if self.filter_query.is_empty() {
-            format!("Queue — {} track(s)", self.items.len())
+        let (bands, available) = match &self.visualizer {
+            Some(visualizer) => (visualizer.bands(), visualizer.available()),
+            None => (Vec::new(), false),
+        };
+        render_spectrum(frame, inner, &bands, available);
+    }
+
+    fn draw_queue(&mut self, frame: &mut Frame, area: Rect) {
+        let focused = self.focus == Focus::Queue;
+        let title = if self.filter_query.is_empty() {
+            format!(" queue — {} track(s) ", self.items.len())
         } else {
             format!(
-                "Queue — {}/{} track(s)",
+                " queue — {}/{} track(s) ",
                 self.filtered.len(),
                 self.items.len()
             )
         };
-        frame.render_widget(
-            Paragraph::new(header).style(
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            chunks[0],
-        );
+        let block = Block::bordered()
+            .title(title)
+            .border_style(border_style(focused))
+            .padding(Padding::horizontal(1));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
 
-        let filter_line = if self.filter_editing {
-            Paragraph::new(format!("/{}█", self.filter_query))
-                .style(Style::default().fg(Color::Yellow))
-        } else if self.filter_query.is_empty() {
-            Paragraph::new("")
-        } else {
-            Paragraph::new(format!(
-                "filter: {}   ({} match(es))   / edit   Esc clear",
-                self.filter_query,
-                self.filtered.len()
-            ))
-            .style(Style::default().fg(Color::DarkGray))
-        };
-        frame.render_widget(filter_line, chunks[1]);
+        let filter_visible = self.filter_editing || !self.filter_query.is_empty();
+        let chunks = Layout::vertical([
+            Constraint::Length(if filter_visible { 1 } else { 0 }),
+            Constraint::Min(0),
+        ])
+        .split(inner);
+
+        if filter_visible {
+            let line = if self.filter_editing {
+                Paragraph::new(format!("/{}█", self.filter_query))
+                    .style(Style::default().fg(Color::Yellow))
+            } else {
+                Paragraph::new(format!(
+                    "filter: {}   ({} match(es))   / edit   Esc clear",
+                    self.filter_query,
+                    self.filtered.len()
+                ))
+                .style(Style::default().fg(Color::DarkGray))
+            };
+            frame.render_widget(line, chunks[0]);
+        }
 
         if self.filtered.is_empty() {
             let message = if self.items.is_empty() {
-                "queue empty"
+                "queue empty — press `a` to add"
             } else {
                 "no matches"
             };
             frame.render_widget(
                 Paragraph::new(message)
                     .alignment(Alignment::Center)
-                    .block(Block::bordered()),
-                chunks[2],
+                    .style(Style::default().fg(Color::DarkGray)),
+                chunks[1],
             );
         } else {
             let items: Vec<ListItem> = self
@@ -866,7 +955,6 @@ impl App {
                 .map(|item| ListItem::new(item.as_str()))
                 .collect();
             let list = List::new(items)
-                .block(Block::bordered())
                 .highlight_style(
                     Style::default()
                         .fg(Color::Black)
@@ -874,15 +962,8 @@ impl App {
                         .add_modifier(Modifier::BOLD),
                 )
                 .highlight_symbol("▸ ");
-            frame.render_stateful_widget(list, chunks[2], &mut self.list_state);
+            frame.render_stateful_widget(list, chunks[1], &mut self.list_state);
         }
-
-        let help = vec![
-            Line::from("j/k move   Ctrl-d/u half   Ctrl-f/b page   Enter play"),
-            Line::from("/ filter   o play   a add   Tab back   Esc clear/back   ? help"),
-        ];
-        frame.render_widget(Paragraph::new(help), chunks[3]);
-        self.draw_message(frame, chunks[4]);
     }
 
     fn draw_help_overlay(&self, frame: &mut Frame, area: Rect) {
@@ -899,8 +980,9 @@ impl App {
             Line::from("  space pause        j/k next/prev      h/l seek 10s"),
             Line::from("  -/+ volume         g/gg/G first/last  s shuffle"),
             Line::from("  r repeat           m mute             o play picker"),
-            Line::from("  a add picker       Tab queue          / filter queue"),
-            Line::from("  q detach           Q quit mpv         ? close help"),
+            Line::from("  a add picker       v visualizer       Tab focus queue"),
+            Line::from("  / filter queue     q detach           Q quit mpv"),
+            Line::from("  ? close help"),
             Line::from(""),
             Line::from(Span::styled(
                 "Queue",
@@ -908,9 +990,10 @@ impl App {
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             )),
-            Line::from("  j/k move           Ctrl-d/u half page Ctrl-f/b page"),
-            Line::from("  Enter play         / filter           Esc clear/back"),
-            Line::from("  o play picker      a add picker       Tab back"),
+            Line::from("  j/k move           g/gg/G first/last  Ctrl-d/u half page"),
+            Line::from("  Ctrl-f/b page      Enter play         / filter"),
+            Line::from("  Esc clear/back     o play picker      a add picker"),
+            Line::from("  v visualizer       Tab focus now playing"),
             Line::from("  q detach           Q quit mpv         ? close help"),
         ];
 
@@ -921,16 +1004,41 @@ impl App {
     }
 
     fn draw_help(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
-        let help = if area.width >= 70 {
-            vec![
-                Line::from("space pause   j/k next/prev   h/l seek 10s   -/+ volume"),
-                Line::from("g/G first/last   s/r/m   o play   a add   Tab queue   ? help"),
-            ]
-        } else {
-            vec![
-                Line::from("space j/k h/l -/+ g/G"),
-                Line::from("s r m o a Tab ? q/Q"),
-            ]
+        let help = match self.focus {
+            Focus::NowPlaying => {
+                if area.width >= 70 {
+                    vec![
+                        Line::from(
+                            "space pause   j/k next/prev   h/l seek 10s   -/+ volume   g/G first/last",
+                        ),
+                        Line::from(
+                            "s/r/m   o play   a add   v viz   Tab queue   / filter   ? help",
+                        ),
+                    ]
+                } else {
+                    vec![
+                        Line::from("space j/k h/l -/+ g/G"),
+                        Line::from("s r m o a v Tab ? q/Q"),
+                    ]
+                }
+            }
+            Focus::Queue => {
+                if area.width >= 70 {
+                    vec![
+                        Line::from(
+                            "j/k move   g/G first/last   Ctrl-d/u half   Ctrl-f/b page   Enter play",
+                        ),
+                        Line::from(
+                            "space pause   / filter   o/a pick   v viz   Tab now-playing   ? help",
+                        ),
+                    ]
+                } else {
+                    vec![
+                        Line::from("j/k g/G ^d/^u ^f/^b Enter"),
+                        Line::from("space / o a v Tab ? q/Q"),
+                    ]
+                }
+            }
         };
         frame.render_widget(
             Paragraph::new(help)
@@ -951,6 +1059,25 @@ impl App {
             }
             self.message = None;
         }
+
+        if !self.mounted {
+            frame.render_widget(
+                Paragraph::new("library not mounted — run `music mount`")
+                    .style(Style::default().fg(Color::Yellow)),
+                area,
+            );
+            return;
+        }
+
+        if self.status.idle && self.status.media_title.is_empty() {
+            frame.render_widget(
+                Paragraph::new("queue empty — press `a` to add")
+                    .style(Style::default().fg(Color::DarkGray)),
+                area,
+            );
+            return;
+        }
+
         frame.render_widget(Paragraph::new(""), area);
     }
 }
@@ -984,6 +1111,83 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
         Constraint::Percentage((100 - percent_x) / 2),
     ])
     .split(vertical[1])[1]
+}
+
+fn border_style(focused: bool) -> Style {
+    if focused {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    }
+}
+
+fn render_spectrum(frame: &mut Frame, area: Rect, bands: &[f32], available: bool) {
+    if area.is_empty() {
+        return;
+    }
+    if !available || bands.is_empty() {
+        frame.render_widget(
+            Paragraph::new("visualizer unavailable (parec)")
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(Color::DarkGray)),
+            area,
+        );
+        return;
+    }
+
+    let width = area.width as usize;
+    if width == 0 {
+        return;
+    }
+    let mut count = width.div_ceil(2).clamp(4, 64).min(bands.len());
+    while count > 1 && count * 2 - 1 > width {
+        count -= 1;
+    }
+
+    let bars: Vec<Bar> = (0..count)
+        .map(|index| {
+            let start = index * bands.len() / count;
+            let end = ((index + 1) * bands.len() / count)
+                .max(start + 1)
+                .min(bands.len());
+            let peak = bands[start..end]
+                .iter()
+                .copied()
+                .filter(|value| value.is_finite())
+                .fold(0.0f32, f32::max);
+            let value = (peak.clamp(0.0, 1.0) * 100.0).round() as u64;
+            Bar::new(value).style(band_style(index, count))
+        })
+        .collect();
+
+    let chart = BarChart::default()
+        .data(BarGroup::default().bars(&bars))
+        .bar_width(1)
+        .bar_gap(1)
+        .max(100);
+    frame.render_widget(chart, area);
+}
+
+fn band_style(index: usize, count: usize) -> Style {
+    let t = if count <= 1 {
+        0.0
+    } else {
+        index as f32 / (count - 1) as f32
+    };
+    let (from, to, amount) = if t < 0.5 {
+        ((0, 200, 255), (0, 255, 120), t * 2.0)
+    } else {
+        ((0, 255, 120), (255, 0, 200), (t - 0.5) * 2.0)
+    };
+    let (red, green, blue) = lerp_rgb(from, to, amount);
+    Style::default().fg(Color::Rgb(red, green, blue))
+}
+
+fn lerp_rgb(from: (u8, u8, u8), to: (u8, u8, u8), amount: f32) -> (u8, u8, u8) {
+    let mix = |start: u8, end: u8| {
+        (start as f32 + (end as f32 - start as f32) * amount.clamp(0.0, 1.0)) as u8
+    };
+    (mix(from.0, to.0), mix(from.1, to.1), mix(from.2, to.2))
 }
 
 #[cfg(test)]
@@ -1066,10 +1270,10 @@ mod layout_fuzz_tests {
                     paused_for_cache: rng.boolean(),
                     mute: rng.boolean(),
                 },
-                view: if rng.boolean() {
-                    View::NowPlaying
+                focus: if rng.boolean() {
+                    Focus::NowPlaying
                 } else {
-                    View::Queue
+                    Focus::Queue
                 },
                 playlist,
                 items,
@@ -1091,6 +1295,8 @@ mod layout_fuzz_tests {
                 } else {
                     None
                 },
+                visualizer: None,
+                visualizer_enabled: rng.boolean(),
                 quit: false,
             };
 
@@ -1125,7 +1331,7 @@ mod key_tests {
             })
             .collect();
         app.filtered = (0..items.len()).collect();
-        app.view = View::Queue;
+        app.focus = Focus::Queue;
         app.list_state.select(Some(0));
         (app, base)
     }
@@ -1149,10 +1355,10 @@ mod key_tests {
         app.handle_key(key(KeyCode::Esc));
         assert_eq!(app.filter_query, "");
         assert_eq!(app.filtered, vec![0, 1, 2]);
-        assert_eq!(app.view, View::Queue);
+        assert_eq!(app.focus, Focus::Queue);
 
         app.handle_key(key(KeyCode::Esc));
-        assert_eq!(app.view, View::NowPlaying);
+        assert_eq!(app.focus, Focus::NowPlaying);
 
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -1185,6 +1391,22 @@ mod key_tests {
 
         app.handle_key(key(KeyCode::Char('G')));
         assert_eq!(app.list_state.selected(), Some(2));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn tab_switches_focus_and_enter_keeps_queue_focus() {
+        let (mut app, base) = app_with_items(&["a", "b"]);
+
+        assert_eq!(app.focus, Focus::Queue);
+        app.handle_key(key(KeyCode::Tab));
+        assert_eq!(app.focus, Focus::NowPlaying);
+        app.handle_key(key(KeyCode::Tab));
+        assert_eq!(app.focus, Focus::Queue);
+
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.focus, Focus::Queue);
 
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -1223,7 +1445,7 @@ mod page_key_tests {
             })
             .collect();
         app.filtered = (0..items.len()).collect();
-        app.view = View::Queue;
+        app.focus = Focus::Queue;
         app.list_state.select(Some(0));
         (app, base)
     }
@@ -1247,5 +1469,30 @@ mod page_key_tests {
         assert_eq!(app.list_state.selected(), Some(0));
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
+#[cfg(test)]
+mod spectrum_fuzz_tests {
+    use super::*;
+    use crate::test_support::{Rng, cases};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    #[test]
+    fn fuzz_spectrum_rendering_never_panics() {
+        let mut rng = Rng::new(0xABC);
+        let iterations = cases(500).min(1_000);
+        for _ in 0..iterations {
+            let width = (rng.below(120) + 1) as u16;
+            let height = (rng.below(20) + 1) as u16;
+            let bands: Vec<f32> = (0..64).map(|_| rng.f64_bits() as f32).collect();
+            let available = rng.boolean();
+
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal
+                .draw(|frame| render_spectrum(frame, frame.area(), &bands, available))
+                .unwrap();
+        }
     }
 }

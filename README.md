@@ -8,7 +8,7 @@ It does three things:
 - mounts the library (`rclone mount`, read-only) when asked,
 - keeps one detached, audio-only mpv process running with an IPC socket,
 - forwards commands (`play`, `next`, `pause`, `seek`, …) to that process from
-  any terminal, with a full-screen ratatui control panel.
+  any terminal, with a multi-pane ratatui control panel.
 
 Because mpv stays alive in the background, playback continues after the
 terminal that started it is closed, and the next command works from anywhere.
@@ -19,6 +19,7 @@ keys and MPRIS panels work too.
 
 - `mpv`, `rclone`
 - `fzf` for `music browse`
+- `parec` (pulseaudio-utils) for the spectrum visualizer
 - `fusermount3` (util-linux) for `music unmount`
 - `tail` (coreutils) for `music logs -f`
 - optional: `mpv-mpris` for hardware media keys
@@ -84,28 +85,43 @@ detached mpv daemon and exits, so the picker window closes immediately.
 
 ### Control panel
 
-`music controls` is a ratatui UI. If the queue is empty when it opens, it
-automatically runs the add picker first, so you land on the panel with music
-already queued.
+`music controls` is a ratatui UI with three panes:
 
-**Now Playing**
+- **Now Playing** — artist/album, title, progress, volume/shuffle/repeat.
+- **Spectrum** — live bars from the system output monitor (`v` toggles it).
+- **Queue** — always visible, with the current track marked.
+
+`Tab` switches focus between Now Playing and Queue; the focused pane's border
+is cyan and the other is dim. If the queue is empty when the panel opens, it
+automatically runs the add picker first.
+
+**Common keys**
 
 | Key | Action |
 | --- | --- |
 | `space` | pause/resume |
-| `j` / `k` | next / previous track |
+| `n` / `p` | next / previous track |
 | `h` / `l` | seek −10s / +10s |
 | `-` / `+` | volume −5 / +5 |
-| `g` / `gg` / `G` | first track / first track / last track |
 | `s` / `r` / `m` | shuffle / repeat / mute |
-| `o` | browse library → play now (replace queue) |
+| `o` (or `b`) | browse library → play now (replace queue) |
 | `a` | browse library → add to queue |
-| `Tab` | queue view |
-| `/` | queue view with a fresh filter |
+| `v` | visualizer on/off |
+| `Tab` | switch focus (Now Playing ↔ Queue) |
+| `/` | focus the queue and filter it |
 | `?` | full help overlay |
 | `q` / `Q` | detach / quit mpv |
 
-**Queue**
+**While Now Playing has focus**
+
+| Key | Action |
+| --- | --- |
+| `j` / `k` | next / previous track |
+| `g` / `gg` / `G` | first track / first track / last track |
+| `←` / `→` | seek −10s / +10s |
+| `↑` / `↓` | volume +5 / −5 |
+
+**While Queue has focus**
 
 | Key | Action |
 | --- | --- |
@@ -113,18 +129,20 @@ already queued.
 | `g` / `gg` / `G` | first / first / last |
 | `Ctrl-d` / `Ctrl-u` | half-page down / up |
 | `Ctrl-f` / `Ctrl-b` | full-page down / up |
+| `↑` / `↓` | move selection |
 | `Enter` | switch to the selected track |
-| `/` | filter by title/filename |
-| `Esc` | clear the filter, else go back |
-| `o` / `a` | play picker / add picker |
-| `Tab` | back to Now Playing |
-| `?` | full help overlay |
-| `q` / `Q` | detach / quit mpv |
+| `Esc` | clear the filter, else focus Now Playing |
 
-- `b` is an alias for `o`; arrow keys and `n`/`p` remain aliases.
 - The `/` filter is case-insensitive; `Enter` keeps it, `Esc` clears it.
 - `gg` uses a 500ms pending-`g` state; a single `g` also goes first after the timeout.
 - The picker (fzf) temporarily takes over the terminal, then returns to the panel.
+
+### Visualizer
+
+The spectrum pane captures the default output monitor with `parec` and renders
+log-spaced FFT bars at ~30 FPS. It shows **system output**, not just mpv — bars
+keep moving if another app is playing. `v` toggles it; toggling off/on reconnects
+to the current default sink. It is hidden automatically below 20 terminal rows.
 
 The UI polls mpv over one persistent socket, reconnects if the daemon restarts,
 and restores the terminal on exit.

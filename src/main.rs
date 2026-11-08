@@ -6,6 +6,7 @@ mod mpv;
 mod player;
 mod queue;
 mod tui;
+mod visualizer;
 
 #[cfg(test)]
 mod test_support;
