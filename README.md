@@ -194,18 +194,17 @@ would be a local rclone VFS cache rather than larger demux buffers.
 
 ## Desktop integration
 
-Example [niri](https://github.com/YaLTeR/niri) binding for a floating controls
-window:
+Example [niri](https://github.com/YaLTeR/niri) binding that focuses an existing
+controls window or opens one as a normal tiled window:
 
 ```kdl
-Mod+M { spawn-sh "~/.config/niri/focus-or-spawn.sh com.mitchellh.ghostty.music ghostty --class=com.mitchellh.ghostty.music -e $HOME/.cargo/bin/music controls"; }
+Mod+M { spawn-sh "~/.config/niri/focus-or-spawn-music.sh"; }
 ```
 
-```kdl
-window-rule {
-    match app-id=r#"^com\.mitchellh\.ghostty\.music$"#
-    open-floating true
-    default-column-width { proportion 0.5; }
-    default-window-height { proportion 0.55; }
-}
+The helper wraps:
+
+```sh
+ghostty --class=com.mitchellh.ghostty.music -e "$HOME/.cargo/bin/music" controls
 ```
+
+No window rule is needed, so it tiles like any other window.
