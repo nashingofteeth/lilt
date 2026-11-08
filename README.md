@@ -205,7 +205,7 @@ Mod+M { spawn-sh "~/.config/niri/focus-or-spawn.sh com.mitchellh.ghostty.music g
 window-rule {
     match app-id=r#"^com\.mitchellh\.ghostty\.music$"#
     open-floating true
-    default-column-width { proportion 0.7; }
+    default-column-width { proportion 0.5; }
     default-window-height { proportion 0.55; }
 }
 ```
