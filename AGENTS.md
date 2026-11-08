@@ -55,8 +55,8 @@ Exemptions:
 
 - Maintenance commands (`mount`, `unmount`, `logs`, `restart`) stay CLI-only
   unless explicitly added to the TUI.
-- TUI-only view features (`/` filter, `v` visualizer, focus/navigation keys)
-  do not need CLI equivalents.
+- TUI-only view features (`/` filter, `v` visualizer, cover art, focus/navigation
+  keys) do not need CLI equivalents.
 
 The TUI footer hints are the canonical in-app key reference; there is no help
 overlay. Keep them short, accurate, and in sync with the README.

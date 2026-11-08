@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, anyhow};
+use image::DynamicImage;
 use ratatui::Frame;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::crossterm::execute;
@@ -9,12 +10,18 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Bar, BarChart, BarGroup, Block, Gauge, List, ListItem, ListState, Padding, Paragraph, Wrap,
 };
+use ratatui_image::StatefulImage;
+use ratatui_image::picker::Picker;
+use ratatui_image::picker::cap_parser::QueryStdioOptions;
+use ratatui_image::protocol::StatefulProtocol;
 use serde_json::json;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 use crate::browse;
 use crate::config::Config;
+use crate::cover;
 use crate::mount;
 use crate::mpv::{self, Mpv, PlaylistEntry, Repeat, Status};
 use crate::player;
@@ -44,6 +51,15 @@ pub fn run(config: &Config) -> Result<()> {
     let mut terminal = ratatui::try_init().context("initializing terminal")?;
     let _ = execute!(std::io::stdout(), SetTitle("music controls"));
     let _guard = TermGuard;
+
+    // Query before the event loop so terminal responses are not mistaken for
+    // key presses. Falls back to halfblocks on terminals without graphics.
+    let query = QueryStdioOptions {
+        timeout: Duration::from_millis(400),
+        ..QueryStdioOptions::default()
+    };
+    app.picker =
+        Picker::from_query_stdio_with_options(query).unwrap_or_else(|_| Picker::halfblocks());
 
     let old_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -98,6 +114,10 @@ struct App {
     filtered: Vec<usize>,
     pending_g: Option<Instant>,
     number_buffer: String,
+    picker: Picker,
+    cover_dir: Option<PathBuf>,
+    cover_pending: Option<(PathBuf, Receiver<Option<DynamicImage>>)>,
+    cover_protocol: Option<StatefulProtocol>,
     visualizer: Option<Visualizer>,
     visualizer_enabled: bool,
     quit: bool,
@@ -123,6 +143,10 @@ impl App {
             filtered: Vec::new(),
             pending_g: None,
             number_buffer: String::new(),
+            picker: Picker::halfblocks(),
+            cover_dir: None,
+            cover_pending: None,
+            cover_protocol: None,
             visualizer: None,
             visualizer_enabled: true,
             quit: false,
@@ -198,6 +222,56 @@ impl App {
         {
             self.reload_playlist();
         }
+
+        self.sync_cover();
+    }
+
+    fn sync_cover(&mut self) {
+        if let Some((dir, receiver)) = self.cover_pending.take() {
+            match receiver.try_recv() {
+                Ok(image) => {
+                    if self.cover_dir.as_ref() == Some(&dir) {
+                        self.cover_protocol =
+                            image.map(|image| self.picker.new_resize_protocol(image));
+                    }
+                }
+                Err(TryRecvError::Empty) => {
+                    self.cover_pending = Some((dir, receiver));
+                }
+                Err(TryRecvError::Disconnected) => {}
+            }
+        }
+
+        let track = if self.status.path.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(&self.status.path))
+        };
+        let dir = track
+            .as_ref()
+            .and_then(|path| path.parent().map(Path::to_path_buf));
+
+        if self.cover_dir == dir {
+            return;
+        }
+
+        self.cover_dir = dir.clone();
+        self.cover_pending = None;
+        self.cover_protocol = None;
+
+        let (Some(dir), Some(track)) = (dir, track) else {
+            return;
+        };
+        if !track.is_file() {
+            return;
+        }
+
+        let (sender, receiver) = mpsc::channel();
+        let pending_dir = dir.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(cover::load(&dir, &track));
+        });
+        self.cover_pending = Some((pending_dir, receiver));
     }
 
     fn reload_playlist(&mut self) {
@@ -780,7 +854,21 @@ impl App {
         }
 
         let show_visualizer = self.visualizer_enabled && area.height >= 20;
-        let mut constraints = vec![Constraint::Length(6)];
+        let show_cover = self.cover_protocol.is_some() && area.width >= 64 && area.height >= 20;
+        let now_height = if show_cover {
+            if area.height >= 40 {
+                16
+            } else if area.height >= 30 {
+                14
+            } else if area.height >= 24 {
+                10
+            } else {
+                8
+            }
+        } else {
+            6
+        };
+        let mut constraints = vec![Constraint::Length(now_height)];
         if show_visualizer {
             constraints.push(Constraint::Length(if area.height >= 30 { 8 } else { 5 }));
         }
@@ -813,13 +901,43 @@ impl App {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
+        let art_width = if self.cover_protocol.is_some() {
+            inner
+                .height
+                .saturating_mul(2)
+                .min(30)
+                .min(inner.width.saturating_sub(31))
+        } else {
+            0
+        };
+        let text_area = if art_width >= 12 {
+            let chunks = Layout::horizontal([
+                Constraint::Length(art_width),
+                Constraint::Length(1),
+                Constraint::Min(0),
+            ])
+            .split(inner);
+            if let Some(protocol) = self.cover_protocol.as_mut() {
+                frame.render_stateful_widget(StatefulImage::new(), chunks[0], protocol);
+            }
+            chunks[2]
+        } else {
+            inner
+        };
+
+        let text_block = Layout::vertical([
+            Constraint::Fill(1),
+            Constraint::Length(4),
+            Constraint::Fill(1),
+        ])
+        .split(text_area)[1];
         let lines = Layout::vertical([
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(1),
         ])
-        .split(inner);
+        .split(text_block);
 
         let context = if self.status.artist.is_empty() && self.status.album.is_empty() {
             "mpv".to_string()
@@ -1258,6 +1376,7 @@ mod layout_fuzz_tests {
                     media_title: rng.string(80),
                     artist: rng.string(40),
                     album: rng.string(40),
+                    path: rng.string(80),
                     time_pos: if rng.boolean() {
                         Some(rng.f64_bits())
                     } else {
@@ -1306,6 +1425,10 @@ mod layout_fuzz_tests {
                     None
                 },
                 number_buffer: rng.string(6),
+                picker: Picker::halfblocks(),
+                cover_dir: None,
+                cover_pending: None,
+                cover_protocol: None,
                 visualizer: None,
                 visualizer_enabled: rng.boolean(),
                 quit: false,

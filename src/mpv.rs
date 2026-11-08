@@ -30,6 +30,7 @@ pub struct Status {
     pub media_title: String,
     pub artist: String,
     pub album: String,
+    pub path: String,
     pub time_pos: Option<f64>,
     pub duration: Option<f64>,
     pub paused: bool,
@@ -148,6 +149,10 @@ impl Mpv {
             }
         }
         let artist = display_artist(&artist, &album_artist);
+        let path = self
+            .try_get("path")?
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_default();
         let time_pos = self.try_get("time-pos")?.and_then(|v| v.as_f64());
         let duration = self.try_get("duration")?.and_then(|v| v.as_f64());
         let paused = self
@@ -199,6 +204,7 @@ impl Mpv {
             media_title,
             artist,
             album,
+            path,
             time_pos,
             duration,
             paused,

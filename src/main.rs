@@ -1,5 +1,6 @@
 mod browse;
 mod config;
+mod cover;
 mod logs;
 mod mount;
 mod mpv;

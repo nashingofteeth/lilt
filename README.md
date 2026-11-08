@@ -97,6 +97,14 @@ detached mpv daemon and exits, so the picker window closes immediately.
 is cyan and the other is dim. If the queue is empty when the panel opens, it
 automatically runs the add picker first.
 
+The Now Playing pane shows cover art when the terminal is at least 64 columns
+wide and 20 rows tall. Embedded art is preferred; otherwise a conventional image
+next to the track (`cover`, `folder`, `front`, `album`, `artwork`, or `art` with
+`.jpg`, `.jpeg`, `.png`, or `.webp`) is used. Kitty, Sixel, and iTerm2 terminals
+get full-resolution graphics; other terminals fall back to Unicode halfblocks.
+Loading happens on a background thread so tracks on the rclone mount do not
+stall the UI.
+
 **Common keys**
 
 | Key | Action |
