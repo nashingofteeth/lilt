@@ -423,6 +423,26 @@ wait_playing() {
     done
 }
 
+start_playback() {
+    local path="${1:-}" do_shuffle="${2:-0}" resolved
+
+    ensure_mount
+    ensure_daemon
+
+    ipc set_property shuffle no >/dev/null
+
+    if [ -z "$path" ]; then
+        ipc loadfile "$MUSIC_DIR" replace >/dev/null
+        ipc set_property shuffle yes >/dev/null
+    else
+        resolved=$(resolve_path "$path")
+        ipc loadfile "$resolved" replace >/dev/null
+        (( do_shuffle )) && ipc set_property shuffle yes >/dev/null
+    fi
+
+    ipc set_property pause no >/dev/null
+}
+
 cmd_play() {
     local path="" do_shuffle=0 arg
     for arg in "$@"; do
@@ -434,22 +454,12 @@ cmd_play() {
         esac
     done
 
-    ensure_mount
-    ensure_daemon
-
-    ipc set_property shuffle no >/dev/null
-
     if [ -z "$path" ]; then
-        ipc loadfile "$MUSIC_DIR" replace >/dev/null
-        ipc set_property shuffle yes >/dev/null
+        start_playback ""
     else
-        local resolved
-        resolved=$(resolve_path "$path")
-        ipc loadfile "$resolved" replace >/dev/null
-        (( do_shuffle )) && ipc set_property shuffle yes >/dev/null
+        start_playback "$path" "$do_shuffle"
     fi
 
-    ipc set_property pause no >/dev/null
     wait_playing
     cmd_status
 }
@@ -516,7 +526,7 @@ cmd_browse() {
     [ -n "$choice" ] || exit 0
 
     if [ "$choice" = '[shuffle all]' ]; then
-        cmd_play --shuffle
+        start_playback ""
         return 0
     fi
 
@@ -526,7 +536,7 @@ cmd_browse() {
     )
 
     if (( ${#albums[@]} == 0 )); then
-        cmd_play "$artist"
+        start_playback "$artist"
         return 0
     fi
 
@@ -558,10 +568,10 @@ cmd_browse() {
     build_playlist "$first" "${paths[@]}"
     ipc loadlist "$first" replace >/dev/null
     rm -f "$first"
-
     ipc set_property pause no >/dev/null
-    wait_playing
-    cmd_status
+    # Return immediately so the picker window closes; playback continues in
+    # the detached mpv daemon.
+    return 0
 }
 
 cmd_toggle() {

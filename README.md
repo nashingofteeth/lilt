@@ -69,6 +69,9 @@ music mount — so `music play "Brian Eno"` and
 `music play "Brian Eno/Ambient 1"` both work. Matching falls back to a
 case-insensitive search under the mount.
 
+`browse` returns as soon as you make a selection: it hands the queue to the
+detached mpv daemon and exits, so the picker window closes immediately.
+
 ### Control panel
 
 `music controls` draws a status line and reads single keys:
