@@ -1211,7 +1211,9 @@ fn render_spectrum(frame: &mut Frame, area: Rect, bands: &[f32], available: bool
                 .filter(|value| value.is_finite())
                 .fold(0.0f32, f32::max);
             let value = (peak.clamp(0.0, 1.0) * 100.0).round() as u64;
-            Bar::new(value).style(band_style(index, count))
+            Bar::new(value)
+                .style(band_style(index, count))
+                .text_value("")
         })
         .collect();
 
@@ -1650,6 +1652,13 @@ mod spectrum_fuzz_tests {
             last as usize + 1 >= total.saturating_sub(1),
             "last {last}, width {width}, total {total}"
         );
+
+        let has_digit = buffer.content.iter().any(|cell| {
+            cell.symbol()
+                .chars()
+                .any(|character| character.is_ascii_digit())
+        });
+        assert!(!has_digit, "spectrum should not render values");
     }
 
     #[test]
