@@ -241,23 +241,45 @@ do_mount() {
 }
 
 ensure_mount() {
-    is_mounted && return 0
+    # Fast path: never touch rclone if the library is already mounted.
+    if is_mounted; then
+        return 0
+    fi
+
     command -v rclone >/dev/null 2>&1 || die "rclone not found"
     mkdir -p "$MUSIC_DIR" "$CACHE_DIR"
 
-    if [ -f "$RCLONE_PID" ] && kill -0 "$(cat "$RCLONE_PID")" 2>/dev/null; then
-        :
-    else
+    local pid=""
+    if [ -f "$RCLONE_PID" ]; then
+        pid=$(cat "$RCLONE_PID" 2>/dev/null || true)
+        if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+            pid=""
+            rm -f "$RCLONE_PID"
+        fi
+    fi
+
+    if [ -z "$pid" ]; then
         nohup rclone mount "$MUSIC_REMOTE" "$MUSIC_DIR" \
             --read-only --dir-cache-time=10m >>"$RCLONE_LOG" 2>&1 &
-        echo $! >"$RCLONE_PID"
+        pid=$!
+        echo "$pid" >"$RCLONE_PID"
     fi
 
     local i
     for i in {1..75}; do
-        is_mounted && return 0
+        if is_mounted; then
+            return 0
+        fi
+        # Do not sit in the wait loop if rclone already died.
+        if ! kill -0 "$pid" 2>/dev/null; then
+            break
+        fi
         sleep 0.2
     done
+
+    if is_mounted; then
+        return 0
+    fi
     die "failed to mount $MUSIC_DIR (see $RCLONE_LOG)"
 }
 
