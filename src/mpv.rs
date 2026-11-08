@@ -134,17 +134,20 @@ impl Mpv {
             .and_then(|v| v.as_str().map(str::to_string))
             .unwrap_or_default();
         let mut artist = String::new();
+        let mut album_artist = String::new();
         let mut album = String::new();
         if let Some(Value::Object(metadata)) = self.try_get("metadata")? {
             for (key, value) in metadata {
                 let Some(text) = value.as_str() else { continue };
                 match key.to_ascii_lowercase().as_str() {
                     "artist" => artist = text.to_string(),
+                    "album_artist" | "albumartist" => album_artist = text.to_string(),
                     "album" => album = text.to_string(),
                     _ => {}
                 }
             }
         }
+        let artist = display_artist(&artist, &album_artist);
         let time_pos = self.try_get("time-pos")?.and_then(|v| v.as_f64());
         let duration = self.try_get("duration")?.and_then(|v| v.as_f64());
         let paused = self
@@ -236,6 +239,38 @@ fn truthy(value: &Value) -> bool {
         Value::Number(value) => value.as_i64().unwrap_or(0) != 0,
         Value::String(value) => !matches!(value.as_str(), "no" | "false" | "0" | ""),
         _ => false,
+    }
+}
+
+/// Collapse duplicate `/`-separated artist names. Some rips repeat the same
+/// performer several times; if that happens and the album artist is available,
+/// prefer the cleaner album artist.
+fn display_artist(artist: &str, album_artist: &str) -> String {
+    use std::collections::HashSet;
+
+    let parts: Vec<&str> = artist
+        .split('/')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect();
+    if parts.is_empty() {
+        return album_artist.trim().to_string();
+    }
+
+    let mut seen = HashSet::new();
+    let unique: Vec<&str> = parts
+        .iter()
+        .copied()
+        .filter(|part| seen.insert(part.to_ascii_lowercase()))
+        .collect();
+    let had_duplicates = unique.len() < parts.len();
+
+    if had_duplicates && !album_artist.trim().is_empty() {
+        album_artist.trim().to_string()
+    } else if unique.len() > 1 {
+        unique.join(" / ")
+    } else {
+        artist.trim().to_string()
     }
 }
 
@@ -547,5 +582,33 @@ mod status_fuzz_tests {
             handle.join().unwrap();
             let _ = std::fs::remove_dir_all(&base);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repeated_artist_parts_prefer_album_artist() {
+        assert_eq!(
+            display_artist(
+                "Los Angeles Philharmonic/Dmitriy Lipay/Dmitriy Lipay/Alexander Lipay/Alexander Lipay",
+                "Los Angeles Philharmonic, Gustavo Dudamel"
+            ),
+            "Los Angeles Philharmonic, Gustavo Dudamel"
+        );
+    }
+
+    #[test]
+    fn duplicate_parts_are_collapsed_without_album_artist() {
+        assert_eq!(display_artist("A/B/B", ""), "A / B");
+    }
+
+    #[test]
+    fn simple_artist_is_unchanged() {
+        assert_eq!(display_artist("A", "Album Artist"), "A");
+        assert_eq!(display_artist("A/B", ""), "A / B");
+        assert_eq!(display_artist("", "Album Artist"), "Album Artist");
     }
 }
