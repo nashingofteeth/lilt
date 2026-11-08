@@ -61,6 +61,7 @@ Playback
   music repeat [off|all|one]
   music controls                 Single-key control panel
   music quit                     Stop and exit mpv
+  music restart                  Quit mpv and unmount (for changing MUSIC_TIER)
   music logs [-f]                Tail rclone/mpv logs
 ```
 
@@ -101,12 +102,43 @@ MUSIC_REMOTE="sam:/Volumes/NASH_SYNC/music/library"
 ```
 
 Override them with environment variables or `~/.config/music/config` (a shell
-fragment sourced by the script):
+fragment sourced by the script). Environment variables take precedence over
+the config file, so you can temporarily override a default:
 
 ```sh
 MUSIC_REMOTE="nas:/music"
 MUSIC_DIR="$HOME/Music"
+MUSIC_TIER=1
 ```
+
+### Gapless tuning (`MUSIC_TIER`)
+
+Tracks are streamed over rclone, so the gap between tracks depends on how fast
+the next file can be opened. Four presets are available; they are independent
+(not cumulative), selected when the mount/mpv start:
+
+| Tier | What it enables |
+| --- | --- |
+| `0` | Defaults (`--gapless-audio=yes`, 128 MiB demux cache, 20s readahead) |
+| `1` | mpv `--prefetch-playlist=yes`, `--audio-buffer=0.5`, 256 MiB / 30s demux cache |
+| `2` | rclone `--buffer-size=64M` (extra in-memory read-ahead) |
+| `3` | rclone `--vfs-cache-mode=full`, `--vfs-read-ahead=64M`, 10 GiB / 168h cache |
+
+To A/B test them, restart between runs so the new flags take effect:
+
+```sh
+music restart
+MUSIC_TIER=1 music play "Album"
+music restart
+MUSIC_TIER=2 music play "Album"
+music restart
+MUSIC_TIER=3 music play "Album"
+music restart
+```
+
+`music play` detects a tier change and restarts the mpv daemon/mount
+automatically, but `music restart` makes the state explicit. Tier 3 stores
+downloaded audio under rclone's cache directory (default `~/.cache/rclone`).
 
 ## How it works
 
