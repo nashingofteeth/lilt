@@ -1,0 +1,71 @@
+# AGENTS.md
+
+## Project
+
+`music` is a Rust wrapper around a detached, audio-only `mpv` daemon. The CLI
+and the ratatui control panel (`music controls`) are two front ends for the same
+queue and playback state.
+
+## Build and test
+
+```sh
+cargo fmt
+./scripts/check.sh                 # fmt --check, clippy -D warnings, tests
+FUZZ_CASES=20000 ./scripts/fuzz.sh # property/fuzz tests
+cargo build --release
+./scripts/install.sh               # install to ~/.cargo/bin
+```
+
+Run `./scripts/check.sh` and a fuzz pass before every commit. Install the
+binary after behavior changes so the local `music` command matches the source.
+
+## CLI/TUI parity (required)
+
+Every playback or queue action must be available in both the CLI and the TUI.
+When adding, changing, or removing one of these actions, update both front ends
+in the same change, then update all of:
+
+- `src/main.rs` clap command and dispatch
+- `src/player.rs` shared implementation
+- `src/tui.rs` key handling and footer hints
+- `README.md` CLI command list and TUI key tables
+- `completions/music.fish`
+- `tests/fuzz_cli.rs` for new CLI commands
+
+Current playback/queue mapping:
+
+| Action | CLI | TUI |
+| --- | --- | --- |
+| play/replace queue | `play [PATH]` | `o` |
+| add to queue | `add PATH...` | `a` |
+| toggle/pause/resume | `toggle`, `pause`, `resume` | `space` |
+| next/previous | `next`, `prev` | `n`, `p`, `j`, `k` |
+| stop (keep mpv) | `stop` | `x` |
+| mute | `mute [on\|off\|toggle]` | `m` |
+| seek | `seek N\|-N\|N%` | `h`, `l`, arrows |
+| volume | `volume N\|+N\|-N` | `-`, `+`, arrows |
+| shuffle | `shuffle [on\|off\|toggle]` | `s` |
+| repeat | `repeat [off\|all\|one]` | `r` |
+| jump to queue number | `jump N` | `N` then `Enter`/`G` |
+| first/last | `first`, `last` | `g`/`gg`, `G` |
+| quit mpv | `quit` | `Q` |
+| detach TUI | — | `q` |
+
+Exemptions:
+
+- Maintenance commands (`mount`, `unmount`, `logs`, `restart`) stay CLI-only
+  unless explicitly added to the TUI.
+- TUI-only view features (`/` filter, `v` visualizer, focus/navigation keys)
+  do not need CLI equivalents.
+
+The TUI footer hints are the canonical in-app key reference; there is no help
+overlay. Keep them short, accurate, and in sync with the README.
+
+## Style
+
+- Rust 2021, `rustfmt` defaults, clippy with `-D warnings`.
+- Prefer shared logic in `src/player.rs`; CLI and TUI should not duplicate
+  mpv command sequences.
+- Use `anyhow` for user-facing errors and the existing `Mpv` IPC helper for
+  player access.
+- Keep commits focused and local; do not push unless asked.

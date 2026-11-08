@@ -7,8 +7,7 @@ use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Bar, BarChart, BarGroup, Block, Clear, Gauge, List, ListItem, ListState, Padding, Paragraph,
-    Wrap,
+    Bar, BarChart, BarGroup, Block, Gauge, List, ListItem, ListState, Padding, Paragraph, Wrap,
 };
 use serde_json::json;
 use std::path::Path;
@@ -97,7 +96,6 @@ struct App {
     filter_query: String,
     filter_editing: bool,
     filtered: Vec<usize>,
-    help_visible: bool,
     pending_g: Option<Instant>,
     number_buffer: String,
     visualizer: Option<Visualizer>,
@@ -123,7 +121,6 @@ impl App {
             filter_query: String::new(),
             filter_editing: false,
             filtered: Vec::new(),
-            help_visible: false,
             pending_g: None,
             number_buffer: String::new(),
             visualizer: None,
@@ -315,8 +312,6 @@ impl App {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             if self.filter_editing {
                 self.clear_filter();
-            } else if self.help_visible {
-                self.help_visible = false;
             } else {
                 self.quit = true;
             }
@@ -325,19 +320,6 @@ impl App {
 
         if self.filter_editing {
             self.handle_filter_key(key);
-            return;
-        }
-
-        if self.help_visible {
-            match key.code {
-                KeyCode::Char('?') | KeyCode::Esc => self.help_visible = false,
-                KeyCode::Char('q') => self.quit = true,
-                KeyCode::Char('Q') => {
-                    self.quit_mpv();
-                    self.quit = true;
-                }
-                _ => {}
-            }
             return;
         }
 
@@ -393,10 +375,6 @@ impl App {
             }
             KeyCode::Tab => {
                 self.toggle_focus();
-                return;
-            }
-            KeyCode::Char('?') => {
-                self.help_visible = true;
                 return;
             }
             KeyCode::Char('/') => {
@@ -461,6 +439,10 @@ impl App {
             }
             KeyCode::Char('m') if !ctrl => {
                 self.cycle_mute();
+                return;
+            }
+            KeyCode::Char('x') if !ctrl => {
+                self.stop_playback();
                 return;
             }
             _ => {}
@@ -665,6 +647,10 @@ impl App {
         self.act(|client| client.command(&["cycle", "mute"]));
     }
 
+    fn stop_playback(&mut self) {
+        self.act(|client| client.command(&["stop"]));
+    }
+
     fn start_visualizer(&mut self) {
         if self.visualizer_enabled && self.visualizer.is_none() {
             self.visualizer = Some(Visualizer::start());
@@ -816,10 +802,6 @@ impl App {
         self.draw_queue(frame, chunks[queue_index]);
         self.draw_help(frame, chunks[help_index]);
         self.draw_message(frame, chunks[message_index]);
-
-        if self.help_visible {
-            self.draw_help_overlay(frame, area);
-        }
     }
 
     fn draw_now_playing(&mut self, frame: &mut Frame, area: Rect) {
@@ -1023,44 +1005,6 @@ impl App {
         }
     }
 
-    fn draw_help_overlay(&self, frame: &mut Frame, area: Rect) {
-        let popup = centered_rect(78, 82, area);
-        frame.render_widget(Clear, popup);
-
-        let lines = vec![
-            Line::from(Span::styled(
-                "Now Playing",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from("  space pause        j/k next/prev      h/l seek 10s"),
-            Line::from("  -/+ volume         g/gg/G first/last  s shuffle"),
-            Line::from("  r repeat           m mute             o play picker"),
-            Line::from("  a add picker       v visualizer       Tab focus queue"),
-            Line::from("  / filter queue     q detach           Q quit mpv"),
-            Line::from("  ? close help"),
-            Line::from(""),
-            Line::from(Span::styled(
-                "Queue",
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )),
-            Line::from("  j/k move           g/gg/G first/last  Ctrl-d/u half page"),
-            Line::from("  Ctrl-f/b page      Enter play         / filter"),
-            Line::from("  N + Enter/G        jump to queue number"),
-            Line::from("  Esc clear/back     o play picker      a add picker"),
-            Line::from("  v visualizer       Tab focus now playing"),
-            Line::from("  q detach           Q quit mpv         ? close help"),
-        ];
-
-        let paragraph = Paragraph::new(lines)
-            .block(Block::bordered().title(" keys "))
-            .wrap(Wrap { trim: false });
-        frame.render_widget(paragraph, popup);
-    }
-
     fn draw_help(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
         let help = match self.focus {
             Focus::NowPlaying => {
@@ -1070,13 +1014,13 @@ impl App {
                             "space pause   j/k next/prev   h/l seek 10s   -/+ volume   g/G first/last",
                         ),
                         Line::from(
-                            "s/r/m   o play   a add   v viz   Tab queue   / filter   ? help",
+                            "s/r/m   x stop   o play   a add   v viz   Tab queue   / filter",
                         ),
                     ]
                 } else {
                     vec![
                         Line::from("space j/k h/l -/+ g/G"),
-                        Line::from("s r m o a v Tab ? q/Q"),
+                        Line::from("s r m x o a v Tab q/Q"),
                     ]
                 }
             }
@@ -1087,13 +1031,13 @@ impl App {
                             "j/k move   g/G first/last   Ctrl-d/u half   Ctrl-f/b page   Enter play",
                         ),
                         Line::from(
-                            "N+Enter jump   space pause   / filter   o/a pick   v viz   Tab   ?",
+                            "N+Enter jump   space pause   x stop   / filter   o/a   v viz   Tab",
                         ),
                     ]
                 } else {
                     vec![
                         Line::from("j/k g/G ^d/^u ^f/^b Enter"),
-                        Line::from("#↵ jump  space / o a v Tab ? q/Q"),
+                        Line::from("#↵ jump  space x / o a v Tab q/Q"),
                     ]
                 }
             }
@@ -1154,21 +1098,6 @@ fn display_name(filename: &str) -> String {
     } else {
         cleaned.to_string()
     }
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let vertical = Layout::vertical([
-        Constraint::Percentage((100 - percent_y) / 2),
-        Constraint::Percentage(percent_y),
-        Constraint::Percentage((100 - percent_y) / 2),
-    ])
-    .split(area);
-    Layout::horizontal([
-        Constraint::Percentage((100 - percent_x) / 2),
-        Constraint::Percentage(percent_x),
-        Constraint::Percentage((100 - percent_x) / 2),
-    ])
-    .split(vertical[1])[1]
 }
 
 fn border_style(focused: bool) -> Style {
@@ -1371,7 +1300,6 @@ mod layout_fuzz_tests {
                 filter_query: rng.string(20),
                 filter_editing: rng.boolean(),
                 filtered,
-                help_visible: rng.boolean(),
                 pending_g: if rng.boolean() {
                     Some(Instant::now())
                 } else {
@@ -1442,22 +1370,6 @@ mod key_tests {
 
         app.handle_key(key(KeyCode::Esc));
         assert_eq!(app.focus, Focus::NowPlaying);
-
-        let _ = std::fs::remove_dir_all(&base);
-    }
-
-    #[test]
-    fn help_overlay_toggles_and_swallows_keys() {
-        let (mut app, base) = app_with_items(&["one", "two"]);
-
-        app.handle_key(key(KeyCode::Char('?')));
-        assert!(app.help_visible);
-
-        app.handle_key(key(KeyCode::Char('j')));
-        assert_eq!(app.list_state.selected(), Some(0));
-
-        app.handle_key(key(KeyCode::Esc));
-        assert!(!app.help_visible);
 
         let _ = std::fs::remove_dir_all(&base);
     }

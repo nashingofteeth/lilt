@@ -65,6 +65,8 @@ Playback
   music browse                   Pick artists and albums with fzf
   music toggle | pause | resume
   music next | prev | stop
+  music mute [on|off|toggle]
+  music jump N | first | last
   music volume N|+N|-N
   music seek N|-N|N%
   music shuffle [on|off|toggle]
@@ -101,6 +103,7 @@ automatically runs the add picker first.
 | --- | --- |
 | `space` | pause/resume |
 | `n` / `p` | next / previous track |
+| `x` | stop playback (keep mpv running) |
 | `h` / `l` | seek −10s / +10s |
 | `-` / `+` | volume −5 / +5 |
 | `s` / `r` / `m` | shuffle / repeat / mute |
@@ -109,7 +112,6 @@ automatically runs the add picker first.
 | `v` | visualizer on/off |
 | `Tab` | switch focus (Now Playing ↔ Queue) |
 | `/` | focus the queue and filter it |
-| `?` | full help overlay |
 | `q` / `Q` | detach / quit mpv |
 
 **While Now Playing has focus**

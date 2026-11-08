@@ -255,6 +255,54 @@ pub fn stop(config: &Config) -> Result<()> {
     connect(config)?.command(&["stop"])
 }
 
+pub fn mute(config: &Config, mode: Option<&str>) -> Result<()> {
+    let mut client = connect(config)?;
+    match mode.unwrap_or("toggle") {
+        "on" | "yes" | "true" => set_bool(&mut client, "mute", true),
+        "off" | "no" | "false" => set_bool(&mut client, "mute", false),
+        "toggle" => client.command(&["cycle", "mute"]),
+        other => bail!("usage: music mute [on|off|toggle] (got {other})"),
+    }
+}
+
+pub fn jump(config: &Config, number: usize) -> Result<()> {
+    let mut client = connect(config)?;
+    jump_index(&mut client, number)
+}
+
+pub fn first(config: &Config) -> Result<()> {
+    jump(config, 1)
+}
+
+pub fn last(config: &Config) -> Result<()> {
+    let mut client = connect(config)?;
+    let count = queue_count(&mut client)?;
+    if count <= 0 {
+        bail!("queue empty");
+    }
+    jump_index(&mut client, count as usize)
+}
+
+fn queue_count(client: &mut Mpv) -> Result<i64> {
+    Ok(client
+        .get("playlist-count")
+        .ok()
+        .and_then(|value| value.as_i64())
+        .unwrap_or(0))
+}
+
+fn jump_index(client: &mut Mpv, number: usize) -> Result<()> {
+    let count = queue_count(client)?;
+    if number == 0 || number as i64 > count {
+        bail!("no track {number} (queue has {count})");
+    }
+    client.command_values(vec![
+        json!("playlist-play-index"),
+        json!((number - 1) as i64),
+    ])?;
+    set_bool(client, "pause", false)
+}
+
 pub fn volume(config: &Config, value: &str) -> Result<()> {
     let command = if let Some(value) = value.strip_prefix('+') {
         let amount = parse_number(value, "volume")?;
