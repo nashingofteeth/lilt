@@ -149,16 +149,17 @@ and restores the terminal on exit.
 
 ## Configuration
 
-Defaults:
+Configuration lives in `~/.config/music/config.toml` (managed by chezmoi in
+this setup):
 
 ```toml
-# ~/.config/music/config.toml (optional)
 music_dir = "~/Music"
 remote = "sam:/Volumes/NASH_SYNC/music/library"
 mpv_extra_args = []
 ```
 
 `MUSIC_DIR` and `MUSIC_REMOTE` environment variables override the file.
+`music_dir` falls back to `~/Music` if omitted; `remote` is required.
 `mpv_extra_args` is appended to the daemon's mpv command line (useful for
 testing with `--ao=null`).
 
@@ -204,7 +205,7 @@ Mod+M { spawn-sh "~/.config/niri/focus-or-spawn-music.sh"; }
 The helper wraps:
 
 ```sh
-ghostty --class=com.mitchellh.ghostty.music -e "$HOME/.cargo/bin/music" controls
+ghostty --class=com.mitchellh.ghostty.music -e "$(command -v music)" controls
 ```
 
 No window rule is needed, so it tiles like any other window.

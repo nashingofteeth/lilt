@@ -55,7 +55,7 @@ impl Config {
         let remote = env::var("MUSIC_REMOTE")
             .ok()
             .or(file.remote)
-            .unwrap_or_else(|| "sam:/Volumes/NASH_SYNC/music/library".to_string());
+            .context("music remote not configured; set `remote` in ~/.config/music/config.toml")?;
 
         let runtime_base = env::var_os("XDG_RUNTIME_DIR")
             .map(PathBuf::from)

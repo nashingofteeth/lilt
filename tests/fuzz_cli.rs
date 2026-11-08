@@ -57,6 +57,15 @@ fn fuzz_safe_cli_execution_never_panics() {
     for dir in [&music_dir, &runtime, &cache, &config] {
         std::fs::create_dir_all(dir).unwrap();
     }
+    std::fs::create_dir_all(config.join("music")).unwrap();
+    std::fs::write(
+        config.join("music/config.toml"),
+        format!(
+            "music_dir = {:?}\nremote = \"test:\"\n",
+            music_dir.display().to_string()
+        ),
+    )
+    .unwrap();
 
     // Commands that fail fast without starting mpv/rclone or touching a mount.
     let commands = [
