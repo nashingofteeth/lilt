@@ -35,20 +35,20 @@ MPV_PID="$CACHE_DIR/mpv.pid"
 #  - prefetch/open the next playlist entry before the current one ends
 #  - 0.5s audio buffer to bridge the network open
 #  - larger demux cache/readahead so the next file is ready early
-#  - never open external cover art (audio-only)
+#  - no automatic sidecar loading: no cover art, subtitles, or external audio
+# Queues are built from the audio allowlist in build_playlist(), so mpv never
+# receives a directory to scan and never sees non-audio files.
 MPV_ARGS=(
     --idle=yes
     --no-video
     --no-terminal
     --really-quiet
     --input-ipc-server="$SOCKET"
-    --directory-mode=recursive
-    --directory-filter-types=audio
     --gapless-audio=yes
     --prefetch-playlist=yes
     --audio-buffer=0.5
+    --autoload-files=no
     --audio-display=no
-    --cover-art-auto=no
     --no-resume-playback
     --save-position-on-quit=no
     --cache=yes
@@ -457,22 +457,30 @@ wait_playing() {
 }
 
 start_playback() {
-    local path="${1:-}" do_shuffle="${2:-0}" resolved
+    local path="${1:-}" do_shuffle="${2:-0}" target tmp
 
     ensure_mount
     ensure_daemon
 
-    ipc set_property shuffle no >/dev/null
-
     if [ -z "$path" ]; then
-        ipc loadfile "$MUSIC_DIR" replace >/dev/null
-        ipc set_property shuffle yes >/dev/null
+        target="$MUSIC_DIR"
+        do_shuffle=1
     else
-        resolved=$(resolve_path "$path")
-        ipc loadfile "$resolved" replace >/dev/null
-        (( do_shuffle )) && ipc set_property shuffle yes >/dev/null
+        target=$(resolve_path "$path")
     fi
 
+    tmp=$(mktemp "$RUNTIME_DIR/queue-play.XXXXXX.m3u")
+    build_playlist "$tmp" "$target"
+    if [ "$(wc -l <"$tmp")" -le 1 ]; then
+        rm -f "$tmp"
+        die "no audio files found in $target"
+    fi
+
+    ipc set_property shuffle no >/dev/null
+    ipc loadlist "$tmp" replace >/dev/null
+    rm -f "$tmp"
+
+    (( do_shuffle )) && ipc set_property shuffle yes >/dev/null
     ipc set_property pause no >/dev/null
 }
 
@@ -502,17 +510,19 @@ cmd_play() {
 build_playlist() {
     local out="$1"
     shift
-    local p f
+    local p
     printf '#EXTM3U\n' >"$out"
     for p in "$@"; do
         if [ -d "$p" ]; then
+            # Only known audio extensions; skip hidden files/dirs (including
+            # AppleDouble "._*" files).
             find "$p" -type f \
                 \( -iname '*.mp3' -o -iname '*.flac' -o -iname '*.m4a' \
                 -o -iname '*.aac' -o -iname '*.ogg' -o -iname '*.opus' \
                 -o -iname '*.wav' -o -iname '*.aif' -o -iname '*.aiff' \
                 -o -iname '*.alac' -o -iname '*.wma' -o -iname '*.ape' \
                 -o -iname '*.wv' -o -iname '*.dsf' -o -iname '*.dff' \) \
-                -print 2>/dev/null | sort >>"$out" || true
+                ! -path '*/.*' -print 2>/dev/null | sort >>"$out" || true
         elif [ -f "$p" ]; then
             printf '%s\n' "$p" >>"$out"
         fi
@@ -531,6 +541,10 @@ cmd_add() {
     done
     tmp=$(mktemp "$RUNTIME_DIR/queue-add.XXXXXX.m3u")
     build_playlist "$tmp" "${paths[@]}"
+    if [ "$(wc -l <"$tmp")" -le 1 ]; then
+        rm -f "$tmp"
+        die "no audio files found in: $*"
+    fi
     ipc loadlist "$tmp" append >/dev/null
     rm -f "$tmp"
     ipc set_property pause no >/dev/null
@@ -599,6 +613,10 @@ cmd_browse() {
 
     first=$(mktemp "$RUNTIME_DIR/queue-browse.XXXXXX.m3u")
     build_playlist "$first" "${paths[@]}"
+    if [ "$(wc -l <"$first")" -le 1 ]; then
+        rm -f "$first"
+        die "no audio files found in selection"
+    fi
     ipc loadlist "$first" replace >/dev/null
     rm -f "$first"
     ipc set_property pause no >/dev/null

@@ -119,7 +119,7 @@ how fast the next file can be opened. mpv is started with:
 - `--prefetch-playlist=yes` — open the next playlist entry before the current one ends
 - `--audio-buffer=0.5` — buffer enough audio to cover the network open
 - `--demuxer-max-bytes=256MiB --demuxer-readahead-secs=30` — keep the next file ready early
-- `--cover-art-auto=no` — don't open sidecar cover images (`cover.jpg`, etc.) at all
+- `--autoload-files=no` — never auto-open sidecars (cover images, subtitles, external audio)
 
 These are intentionally mpv-only: no rclone disk cache, so playback starts
 immediately and nothing is written to a cache directory. If a particular album
@@ -137,9 +137,10 @@ would be a local rclone VFS cache rather than larger demux buffers.
   - socket: `${XDG_RUNTIME_DIR:-/tmp}/music-mount-$UID/mpv.sock`
   - logs and pid files: `~/.cache/music/`
 
-mpv runs with `--directory-mode=recursive --directory-filter-types=audio`, so
-passing an artist or album directory queues its audio files and ignores cover
-art.
+Queues are built by the wrapper as m3u playlists from an audio-extension
+allowlist (`build_playlist`), so mpv never scans a directory itself. Only known
+audio files are included; hidden files and AppleDouble `._*` sidecars are
+skipped, as are cover images, cue sheets, playlists, and .nfo files.
 
 ## Desktop integration
 
