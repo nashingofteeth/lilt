@@ -327,9 +327,13 @@ pub fn restart(config: &Config) -> Result<()> {
 }
 
 fn parse_number(value: &str, what: &str) -> Result<f64> {
-    value
+    let parsed = value
         .parse::<f64>()
-        .map_err(|_| anyhow::anyhow!("invalid {what} value: {value}"))
+        .map_err(|_| anyhow::anyhow!("invalid {what} value: {value}"))?;
+    if !parsed.is_finite() {
+        bail!("invalid {what} value: {value}");
+    }
+    Ok(parsed)
 }
 
 #[cfg(test)]
@@ -349,5 +353,72 @@ mod tests {
         assert_eq!(repeat_label(Repeat::Off), "off");
         assert_eq!(repeat_label(Repeat::All), "all");
         assert_eq!(repeat_label(Repeat::One), "one");
+    }
+}
+
+#[cfg(test)]
+mod fuzz_tests {
+    use super::*;
+    use crate::test_support::{Rng, cases};
+
+    #[test]
+    fn fuzz_parse_number_and_format_time_never_panic() {
+        let mut rng = Rng::new(77);
+        for _ in 0..cases(5_000) {
+            let text = rng.string(40);
+            let _ = parse_number(&text, "volume");
+            let value = rng.f64_bits();
+            let _ = format_time(if rng.boolean() { None } else { Some(value) });
+        }
+
+        for text in ["NaN", "inf", "-inf", "1e999", "-1e999", ""] {
+            assert!(
+                parse_number(text, "volume").is_err(),
+                "{text:?} should be rejected"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod status_fuzz_tests {
+    use super::*;
+    use crate::mpv::Status;
+    use crate::test_support::{Rng, cases};
+
+    #[test]
+    fn fuzz_status_line_never_panics() {
+        let mut rng = Rng::new(0x123);
+        for _ in 0..cases(5_000) {
+            let status = Status {
+                idle: rng.boolean(),
+                media_title: rng.string(80),
+                artist: rng.string(40),
+                album: rng.string(40),
+                time_pos: if rng.boolean() {
+                    Some(rng.f64_bits())
+                } else {
+                    None
+                },
+                duration: if rng.boolean() {
+                    Some(rng.f64_bits())
+                } else {
+                    None
+                },
+                paused: rng.boolean(),
+                volume: rng.f64_bits(),
+                shuffle: rng.boolean(),
+                repeat: match rng.below(3) {
+                    0 => Repeat::Off,
+                    1 => Repeat::All,
+                    _ => Repeat::One,
+                },
+                playlist_pos: rng.below(100) as i64 - 1,
+                playlist_count: rng.below(100) as i64,
+                paused_for_cache: rng.boolean(),
+                mute: rng.boolean(),
+            };
+            let _ = status_line(&status);
+        }
     }
 }

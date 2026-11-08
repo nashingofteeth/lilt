@@ -37,7 +37,15 @@ cargo build --release
 
 # Format, lint, and test
 ./scripts/check.sh
+
+# Property/fuzz tests (bigger case count)
+./scripts/fuzz.sh
 ```
+
+`scripts/fuzz.sh` exercises random CLI parses and executions, TOML config
+parsing, path resolution, playlist building over random directory trees, mpv
+IPC replies and status parsing, and ratatui rendering at random terminal sizes.
+Use `FUZZ_CASES=50000 ./scripts/fuzz.sh` for a longer run.
 
 ## Usage
 

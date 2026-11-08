@@ -103,8 +103,16 @@ fn fzf(lines: &[String], args: &[&str]) -> Result<Vec<String>> {
 
     {
         let stdin = child.stdin.as_mut().context("opening fzf stdin")?;
+        let mut write_failed = false;
         for line in lines {
-            writeln!(stdin, "{line}")?;
+            if writeln!(stdin, "{line}").is_err() {
+                write_failed = true;
+                break;
+            }
+        }
+        if write_failed {
+            let _ = child.wait();
+            return Ok(Vec::new());
         }
     }
 

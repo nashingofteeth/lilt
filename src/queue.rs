@@ -118,3 +118,90 @@ mod tests {
         assert!(!is_audio(Path::new("playlist.m3u")));
     }
 }
+
+#[cfg(test)]
+mod fuzz_tests {
+    use super::*;
+    use crate::test_support::{Rng, cases, test_config, unique_base};
+    use std::fs;
+    use std::path::Path;
+
+    const NAMES: &[&str] = &[
+        "track", "Track", "01 song", "._apple", ".hidden", "é", "日", "a b", "x", "",
+    ];
+    const EXTS: &[&str] = &[
+        "flac", "FLAC", "mp3", "wav", "jpg", "nfo", "cue", "m3u", "txt", "",
+    ];
+
+    #[test]
+    fn fuzz_audio_paths_never_panic() {
+        let mut rng = Rng::new(9);
+        for _ in 0..cases(5_000) {
+            let name = rng.string(40);
+            let _ = is_audio(Path::new(&name));
+        }
+    }
+
+    #[test]
+    fn fuzz_build_playlist_random_tree() {
+        let mut rng = Rng::new(42);
+        let iterations = cases(100).min(500);
+
+        for case in 0..iterations {
+            let base = unique_base(&format!("queue-{case}"));
+            let root = base.join("music");
+            fs::create_dir_all(&root).unwrap();
+            fs::write(root.join("valid.flac"), b"x").unwrap();
+
+            for _ in 0..rng.below(15) {
+                let name = *rng.pick(NAMES);
+                let ext = *rng.pick(EXTS);
+                let filename = if ext.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{name}.{ext}")
+                };
+                if filename.is_empty() {
+                    continue;
+                }
+                fs::write(root.join(&filename), b"x").unwrap();
+            }
+
+            for _ in 0..rng.below(3) {
+                let dir = root.join(format!("sub{}", rng.below(100)));
+                fs::create_dir_all(&dir).unwrap();
+                fs::write(dir.join("nested.flac"), b"x").unwrap();
+                fs::write(dir.join("cover.jpg"), b"x").unwrap();
+            }
+
+            let hidden = root.join(format!(".hidden-{case}"));
+            fs::create_dir_all(&hidden).unwrap();
+            fs::write(hidden.join("hidden.flac"), b"x").unwrap();
+
+            let config = test_config(root.clone(), &base);
+            let (playlist, count) = build_playlist(&config, std::slice::from_ref(&root))
+                .expect("valid audio file should produce a playlist");
+            assert!(count >= 1);
+
+            let text = fs::read_to_string(&playlist).unwrap();
+            for line in text.lines().skip(1) {
+                let path = Path::new(line);
+                assert!(is_audio(path), "non-audio entry {line}");
+                let relative = path.strip_prefix(&root).unwrap_or(path);
+                assert!(
+                    !relative
+                        .components()
+                        .any(|component| component.as_os_str().to_string_lossy().starts_with('.')),
+                    "hidden entry {line}"
+                );
+            }
+            let _ = fs::remove_file(&playlist);
+
+            for _ in 0..10 {
+                let _ = resolve_path(&config, &rng.string(50));
+            }
+
+            let _ = fs::remove_dir_all(&base);
+        }
+    }
+}

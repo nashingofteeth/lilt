@@ -371,8 +371,8 @@ impl App {
 
     fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
-        if area.width < 30 || area.height < 8 {
-            let paragraph = Paragraph::new("terminal too small")
+        if area.width < 40 || area.height < 12 {
+            let paragraph = Paragraph::new("terminal too small (need 40x12)")
                 .alignment(Alignment::Center)
                 .block(Block::bordered());
             frame.render_widget(paragraph, area);
@@ -443,6 +443,7 @@ impl App {
             }
             _ => 0.0,
         };
+        let ratio = if ratio.is_finite() { ratio } else { 0.0 };
         let label = if self.status.idle {
             "idle".to_string()
         } else {
@@ -595,5 +596,110 @@ fn display_name(filename: &str) -> String {
         stem.to_string()
     } else {
         cleaned.to_string()
+    }
+}
+
+#[cfg(test)]
+mod fuzz_tests {
+    use super::*;
+    use crate::test_support::{Rng, cases};
+
+    #[test]
+    fn fuzz_display_name_never_panics() {
+        let mut rng = Rng::new(7);
+        for _ in 0..cases(5_000) {
+            let input = rng.string(100);
+            let _ = display_name(&input);
+        }
+    }
+}
+
+#[cfg(test)]
+mod layout_fuzz_tests {
+    use super::*;
+    use crate::test_support::{Rng, cases, test_config, unique_base};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    #[test]
+    fn fuzz_tui_rendering_never_panics() {
+        let mut rng = Rng::new(0xBEEF);
+        let iterations = cases(500).min(2_000);
+        let base = unique_base("tui-layout");
+        let config = test_config(base.join("Music"), &base);
+
+        for _ in 0..iterations {
+            let width = (rng.below(120) + 1) as u16;
+            let height = (rng.below(60) + 1) as u16;
+            let count = rng.below(30);
+            let items: Vec<String> = (0..count)
+                .map(|index| format!("● {:>4}  {}", index + 1, rng.string(60)))
+                .collect();
+            let playlist: Vec<PlaylistEntry> = (0..count)
+                .map(|_| PlaylistEntry {
+                    filename: rng.string(30),
+                    title: Some(rng.string(30)),
+                })
+                .collect();
+            let selected = if items.is_empty() {
+                None
+            } else {
+                Some(rng.below(items.len()))
+            };
+
+            let mut app = App {
+                config: config.clone(),
+                mpv: None,
+                status: Status {
+                    idle: rng.boolean(),
+                    media_title: rng.string(80),
+                    artist: rng.string(40),
+                    album: rng.string(40),
+                    time_pos: if rng.boolean() {
+                        Some(rng.f64_bits())
+                    } else {
+                        None
+                    },
+                    duration: if rng.boolean() {
+                        Some(rng.f64_bits())
+                    } else {
+                        None
+                    },
+                    paused: rng.boolean(),
+                    volume: rng.f64_bits(),
+                    shuffle: rng.boolean(),
+                    repeat: match rng.below(3) {
+                        0 => Repeat::Off,
+                        1 => Repeat::All,
+                        _ => Repeat::One,
+                    },
+                    playlist_pos: rng.below(35) as i64 - 1,
+                    playlist_count: rng.below(35) as i64,
+                    paused_for_cache: rng.boolean(),
+                    mute: rng.boolean(),
+                },
+                view: if rng.boolean() {
+                    View::NowPlaying
+                } else {
+                    View::Queue
+                },
+                playlist,
+                items,
+                list_state: ListState::default().with_selected(selected),
+                mounted: rng.boolean(),
+                last_poll: Instant::now(),
+                message: if rng.boolean() {
+                    Some((rng.string(50), Instant::now()))
+                } else {
+                    None
+                },
+                quit: false,
+            };
+
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+        }
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

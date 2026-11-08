@@ -7,6 +7,9 @@ mod player;
 mod queue;
 mod tui;
 
+#[cfg(test)]
+mod test_support;
+
 use anyhow::Result;
 use clap::{CommandFactory, Parser, Subcommand};
 use std::process::exit;
@@ -125,5 +128,62 @@ fn run() -> Result<()> {
         }
         Command::Logs { follow } => logs::show(&config, follow),
         Command::Restart => player::restart(&config),
+    }
+}
+
+#[cfg(test)]
+mod fuzz_tests {
+    use super::Cli;
+    use crate::test_support::{Rng, cases};
+    use clap::Parser;
+
+    #[test]
+    fn fuzz_cli_parsing_never_panics() {
+        let pool = [
+            "play",
+            "add",
+            "volume",
+            "seek",
+            "shuffle",
+            "repeat",
+            "status",
+            "controls",
+            "mount",
+            "unmount",
+            "restart",
+            "logs",
+            "--help",
+            "-h",
+            "--version",
+            "-s",
+            "--shuffle",
+            "-5",
+            "+10",
+            "50%",
+            "NaN",
+            "inf",
+            "--",
+            "",
+            "a b",
+            "🎵",
+            "-",
+            "\\",
+            "..",
+            "~",
+        ];
+        let mut rng = Rng::new(0xC0FFEE);
+
+        for _ in 0..cases(2_000) {
+            let mut args = vec!["music".to_string()];
+            for _ in 0..rng.below(7) {
+                if rng.boolean() {
+                    let word: &str = rng.pick(&pool);
+                    args.push(word.to_string());
+                } else {
+                    args.push(rng.string(30));
+                }
+            }
+            let _ = Cli::try_parse_from(args);
+        }
     }
 }

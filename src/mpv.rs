@@ -411,3 +411,141 @@ pub fn open_log_for_append(path: &Path) -> Result<File> {
         .open(path)
         .with_context(|| format!("opening {}", path.display()))
 }
+
+#[cfg(test)]
+mod fuzz_tests {
+    use super::*;
+    use crate::test_support::{Rng, cases, unique_base};
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixListener;
+    use std::thread;
+
+    #[test]
+    fn fuzz_truthy_never_panics() {
+        let mut rng = Rng::new(99);
+        for _ in 0..cases(5_000) {
+            let value = match rng.below(7) {
+                0 => Value::Null,
+                1 => Value::Bool(rng.boolean()),
+                2 => json!(rng.next_u64() as i64),
+                3 => json!(rng.next_u64() as f64),
+                4 => Value::String(rng.string(20)),
+                5 => Value::Array(vec![Value::Bool(true), Value::String(rng.string(5))]),
+                _ => {
+                    let mut object = serde_json::Map::new();
+                    object.insert(rng.string(8), Value::String(rng.string(8)));
+                    Value::Object(object)
+                }
+            };
+            let _ = truthy(&value);
+        }
+    }
+
+    #[test]
+    fn fuzz_ipc_random_replies_never_panic() {
+        let mut rng = Rng::new(1234);
+        let iterations = cases(100).min(300);
+
+        for case in 0..iterations {
+            let base = unique_base(&format!("ipc-{case}"));
+            let path = base.join("mpv.sock");
+            let listener = UnixListener::bind(&path).unwrap();
+            let payload = if rng.boolean() {
+                rng.bytes(200)
+            } else {
+                rng.string(200).into_bytes()
+            };
+
+            let handle = thread::spawn(move || {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut request = [0u8; 4096];
+                    let _ = stream.read(&mut request);
+                    let _ = stream.write_all(&payload);
+                    if !payload.ends_with(b"\n") {
+                        let _ = stream.write_all(b"\n");
+                    }
+                }
+            });
+
+            let mut client = Mpv::connect(&path).unwrap();
+            let _ = client.request(vec![json!("get_property"), json!("x")]);
+            handle.join().unwrap();
+            let _ = std::fs::remove_dir_all(&base);
+        }
+    }
+}
+
+#[cfg(test)]
+mod status_fuzz_tests {
+    use super::*;
+    use crate::test_support::{Rng, cases, unique_base};
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixListener;
+    use std::thread;
+
+    fn random_value(rng: &mut Rng) -> Value {
+        match rng.below(8) {
+            0 => Value::Null,
+            1 => Value::Bool(rng.boolean()),
+            2 => json!(rng.next_u64() as i64),
+            3 => json!(rng.next_u64() as f64),
+            4 => Value::String(rng.string(20)),
+            5 => Value::Array(vec![Value::Bool(true), Value::String(rng.string(5))]),
+            6 => {
+                let mut object = serde_json::Map::new();
+                object.insert("Artist".to_string(), Value::String(rng.string(10)));
+                object.insert("Album".to_string(), Value::String(rng.string(10)));
+                Value::Object(object)
+            }
+            _ => {
+                let mut object = serde_json::Map::new();
+                object.insert(rng.string(8), random_value(rng));
+                Value::Object(object)
+            }
+        }
+    }
+
+    #[test]
+    fn fuzz_status_parsing_random_properties_never_panics() {
+        let mut rng = Rng::new(0x5EED);
+        let iterations = cases(100).min(300);
+
+        for case in 0..iterations {
+            let base = unique_base(&format!("status-{case}"));
+            let path = base.join("mpv.sock");
+            let listener = UnixListener::bind(&path).unwrap();
+            let seed = rng.next_u64();
+
+            let handle = thread::spawn(move || {
+                let mut local = Rng::new(seed);
+                let (stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut writer = stream;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                        break;
+                    }
+                    let Ok(request) = serde_json::from_str::<Value>(&line) else {
+                        continue;
+                    };
+                    let Some(id) = request.get("request_id").and_then(Value::as_u64) else {
+                        continue;
+                    };
+                    let reply = json!({
+                        "request_id": id,
+                        "error": "success",
+                        "data": random_value(&mut local),
+                    });
+                    let _ = writeln!(writer, "{reply}");
+                }
+            });
+
+            let mut client = Mpv::connect(&path).unwrap();
+            let _ = client.status();
+            drop(client);
+            handle.join().unwrap();
+            let _ = std::fs::remove_dir_all(&base);
+        }
+    }
+}

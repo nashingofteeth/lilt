@@ -100,3 +100,29 @@ fn expand_tilde(value: &str, home: &Path) -> PathBuf {
         PathBuf::from(value)
     }
 }
+
+#[cfg(test)]
+mod fuzz_tests {
+    use super::*;
+    use crate::test_support::{Rng, cases};
+    use std::path::Path;
+
+    #[test]
+    fn fuzz_expand_tilde_never_panics() {
+        let home = Path::new("/home/fuzz");
+        let mut rng = Rng::new(0x1234);
+        for _ in 0..cases(5_000) {
+            let input = rng.string(80);
+            let _ = expand_tilde(&input, home);
+        }
+    }
+
+    #[test]
+    fn fuzz_toml_config_parsing_never_panics() {
+        let mut rng = Rng::new(0x5678);
+        for _ in 0..cases(5_000) {
+            let text = rng.string(300);
+            let _ = toml::from_str::<FileConfig>(&text);
+        }
+    }
+}
