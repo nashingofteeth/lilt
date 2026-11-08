@@ -99,6 +99,7 @@ struct App {
     filtered: Vec<usize>,
     help_visible: bool,
     pending_g: Option<Instant>,
+    number_buffer: String,
     visualizer: Option<Visualizer>,
     visualizer_enabled: bool,
     quit: bool,
@@ -124,6 +125,7 @@ impl App {
             filtered: Vec::new(),
             help_visible: false,
             pending_g: None,
+            number_buffer: String::new(),
             visualizer: None,
             visualizer_enabled: true,
             quit: false,
@@ -347,6 +349,37 @@ impl App {
             }
         }
 
+        if key.modifiers.is_empty() {
+            match key.code {
+                KeyCode::Char(character) if character.is_ascii_digit() => {
+                    if self.number_buffer.len() < 9 {
+                        self.number_buffer.push(character);
+                    }
+                    return;
+                }
+                KeyCode::Backspace if !self.number_buffer.is_empty() => {
+                    self.number_buffer.pop();
+                    return;
+                }
+                KeyCode::Esc if !self.number_buffer.is_empty() => {
+                    self.number_buffer.clear();
+                    return;
+                }
+                KeyCode::Enter if !self.number_buffer.is_empty() => {
+                    self.jump_to_number();
+                    return;
+                }
+                KeyCode::Char('G') if !self.number_buffer.is_empty() => {
+                    self.jump_to_number();
+                    return;
+                }
+                _ => {}
+            }
+            if !self.number_buffer.is_empty() {
+                self.number_buffer.clear();
+            }
+        }
+
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Char('q') if !ctrl => {
@@ -502,6 +535,23 @@ impl App {
             client.command_values(vec![json!("playlist-play-index"), json!(index)])?;
             Ok(())
         });
+    }
+
+    fn jump_to_number(&mut self) {
+        let value = std::mem::take(&mut self.number_buffer);
+        let Ok(number) = value.parse::<usize>() else {
+            return;
+        };
+        if number == 0 || number > self.items.len() {
+            self.show_message(format!("no track {number}"));
+            return;
+        }
+
+        self.filter_query.clear();
+        self.filter_editing = false;
+        self.apply_filter();
+        self.list_state.select(Some(number - 1));
+        self.play_index((number - 1) as i64);
     }
 
     fn goto_first(&mut self) {
@@ -916,7 +966,8 @@ impl App {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        let filter_visible = self.filter_editing || !self.filter_query.is_empty();
+        let filter_visible =
+            self.filter_editing || !self.filter_query.is_empty() || !self.number_buffer.is_empty();
         let chunks = Layout::vertical([
             Constraint::Length(if filter_visible { 1 } else { 0 }),
             Constraint::Min(0),
@@ -924,7 +975,10 @@ impl App {
         .split(inner);
 
         if filter_visible {
-            let line = if self.filter_editing {
+            let line = if !self.number_buffer.is_empty() {
+                Paragraph::new(format!("goto: {}█", self.number_buffer))
+                    .style(Style::default().fg(Color::Yellow))
+            } else if self.filter_editing {
                 Paragraph::new(format!("/{}█", self.filter_query))
                     .style(Style::default().fg(Color::Yellow))
             } else {
@@ -995,6 +1049,7 @@ impl App {
             )),
             Line::from("  j/k move           g/gg/G first/last  Ctrl-d/u half page"),
             Line::from("  Ctrl-f/b page      Enter play         / filter"),
+            Line::from("  N + Enter/G        jump to queue number"),
             Line::from("  Esc clear/back     o play picker      a add picker"),
             Line::from("  v visualizer       Tab focus now playing"),
             Line::from("  q detach           Q quit mpv         ? close help"),
@@ -1032,13 +1087,13 @@ impl App {
                             "j/k move   g/G first/last   Ctrl-d/u half   Ctrl-f/b page   Enter play",
                         ),
                         Line::from(
-                            "space pause   / filter   o/a pick   v viz   Tab now-playing   ? help",
+                            "N+Enter jump   space pause   / filter   o/a pick   v viz   Tab   ?",
                         ),
                     ]
                 } else {
                     vec![
                         Line::from("j/k g/G ^d/^u ^f/^b Enter"),
-                        Line::from("space / o a v Tab ? q/Q"),
+                        Line::from("#↵ jump  space / o a v Tab ? q/Q"),
                     ]
                 }
             }
@@ -1298,6 +1353,7 @@ mod layout_fuzz_tests {
                 } else {
                     None
                 },
+                number_buffer: rng.string(6),
                 visualizer: None,
                 visualizer_enabled: rng.boolean(),
                 quit: false,
@@ -1394,6 +1450,53 @@ mod key_tests {
 
         app.handle_key(key(KeyCode::Char('G')));
         assert_eq!(app.list_state.selected(), Some(2));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn multi_digit_number_jumps_to_queue_item() {
+        let items: Vec<String> = (0..200).map(|index| format!("track {index}")).collect();
+        let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+        let (mut app, base) = app_with_items(&refs);
+
+        app.handle_key(key(KeyCode::Char('1')));
+        app.handle_key(key(KeyCode::Char('2')));
+        app.handle_key(key(KeyCode::Char('3')));
+        assert_eq!(app.number_buffer, "123");
+        app.handle_key(key(KeyCode::Char('G')));
+        assert_eq!(app.number_buffer, "");
+        assert_eq!(app.list_state.selected(), Some(122));
+        assert_eq!(app.focus, Focus::Queue);
+
+        app.handle_key(key(KeyCode::Char('4')));
+        app.handle_key(key(KeyCode::Char('2')));
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.list_state.selected(), Some(41));
+        assert_eq!(app.focus, Focus::Queue);
+
+        app.focus = Focus::NowPlaying;
+        app.handle_key(key(KeyCode::Char('1')));
+        app.handle_key(key(KeyCode::Char('0')));
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.list_state.selected(), Some(9));
+        assert_eq!(app.focus, Focus::NowPlaying);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn out_of_range_number_is_rejected() {
+        let items: Vec<String> = (0..20).map(|index| format!("track {index}")).collect();
+        let refs: Vec<&str> = items.iter().map(String::as_str).collect();
+        let (mut app, base) = app_with_items(&refs);
+
+        for digit in "999".chars() {
+            app.handle_key(key(KeyCode::Char(digit)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        let message = app.message.as_ref().map(|(message, _)| message.as_str());
+        assert_eq!(message, Some("no track 999"));
 
         let _ = std::fs::remove_dir_all(&base);
     }

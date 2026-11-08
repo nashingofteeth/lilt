@@ -131,6 +131,7 @@ automatically runs the add picker first.
 | `Ctrl-f` / `Ctrl-b` | full-page down / up |
 | `↑` / `↓` | move selection |
 | `Enter` | switch to the selected track |
+| `1–9…` then `Enter` or `G` | jump to that queue number (multi-digit supported) |
 | `Esc` | clear the filter, else focus Now Playing |
 
 - The `/` filter is case-insensitive; `Enter` keeps it, `Esc` clears it.
