@@ -122,6 +122,8 @@ guessed title.
 | `v` | visualizer on/off |
 | `Tab` | switch focus (Now Playing ↔ Queue) |
 | `/` | focus the queue and filter it |
+| `1–9…` then `Enter` or `G` | jump to that queue number (from either pane) |
+| `Ctrl-c` | quit the panel (clears an active filter first) |
 | `q` / `Q` | detach / quit mpv |
 
 **While Now Playing has focus**
@@ -139,14 +141,16 @@ guessed title.
 | --- | --- |
 | `j` / `k` | move selection |
 | `g` / `gg` / `G` | first / first / last |
+| `PgUp` / `PgDn` | full-page up / down |
 | `Ctrl-d` / `Ctrl-u` | half-page down / up |
 | `Ctrl-f` / `Ctrl-b` | full-page down / up |
+| `Home` / `End` | first / last |
 | `↑` / `↓` | move selection |
 | `Enter` | switch to the selected track |
-| `1–9…` then `Enter` or `G` | jump to that queue number (multi-digit supported) |
 | `Esc` | clear the filter, else focus Now Playing |
 
-- The `/` filter is case-insensitive; `Enter` keeps it, `Esc` clears it.
+- The `/` filter is case-insensitive; `Enter` keeps it, `Esc` clears it, `Ctrl-u` clears the query while editing, and `Backspace` deletes a character.
+- While entering a queue number, `Backspace` edits it and `Esc` cancels.
 - `gg` uses a 500ms pending-`g` state; a single `g` also goes first after the timeout.
 - The picker (fzf) temporarily takes over the terminal, then returns to the panel.
 

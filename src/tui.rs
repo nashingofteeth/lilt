@@ -1156,44 +1156,8 @@ impl App {
     }
 
     fn draw_help(&self, frame: &mut Frame, area: ratatui::layout::Rect) {
-        let help = match self.focus {
-            Focus::NowPlaying => {
-                if area.width >= 70 {
-                    vec![
-                        Line::from(
-                            "space pause   j/k next/prev   h/l seek 10s   -/+ volume   g/G first/last",
-                        ),
-                        Line::from(
-                            "s/r/m   x stop   o play   a add   v viz   Tab queue   / filter",
-                        ),
-                    ]
-                } else {
-                    vec![
-                        Line::from("space j/k h/l -/+ g/G"),
-                        Line::from("s r m x o a v Tab q/Q"),
-                    ]
-                }
-            }
-            Focus::Queue => {
-                if area.width >= 70 {
-                    vec![
-                        Line::from(
-                            "j/k move   g/G first/last   Ctrl-d/u half   Ctrl-f/b page   Enter play",
-                        ),
-                        Line::from(
-                            "N+Enter jump   space pause   x stop   / filter   o/a   v viz   Tab",
-                        ),
-                    ]
-                } else {
-                    vec![
-                        Line::from("j/k g/G ^d/^u ^f/^b Enter"),
-                        Line::from("#↵ jump  space x / o a v Tab q/Q"),
-                    ]
-                }
-            }
-        };
         frame.render_widget(
-            Paragraph::new(help)
+            Paragraph::new(help_lines(self.focus, area.width))
                 .style(Style::default().fg(Color::DarkGray))
                 .wrap(Wrap { trim: true }),
             area,
@@ -1231,6 +1195,32 @@ impl App {
         }
 
         frame.render_widget(Paragraph::new(""), area);
+    }
+}
+
+fn help_lines(focus: Focus, width: u16) -> Vec<Line<'static>> {
+    if width >= 70 {
+        match focus {
+            Focus::NowPlaying => vec![
+                Line::from("space pause  j/k next/prev  h/l ←/→ seek  -/+ ↑/↓ vol  g/G first/last"),
+                Line::from("s/r/m  x stop  o/b play  a add  v viz  Tab queue  / filter  q/Q"),
+            ],
+            Focus::Queue => vec![
+                Line::from("j/k move  g/G first/last  Ctrl-d/u half  Ctrl-f/b page  Enter play"),
+                Line::from("N+Enter/G jump  space pause  x stop  / filter  o/a  v viz  Tab"),
+            ],
+        }
+    } else {
+        match focus {
+            Focus::NowPlaying => vec![
+                Line::from("space j/k h/l -/+ g/G"),
+                Line::from("s r m x o/b a v Tab / q/Q"),
+            ],
+            Focus::Queue => vec![
+                Line::from("j/k g/G ^d/^u ^f/^b Enter"),
+                Line::from("N+↵/G jump  space x / o a v Tab q/Q"),
+            ],
+        }
     }
 }
 
@@ -1460,6 +1450,33 @@ mod progress_tests {
             text(progress_line(10, Some(11.0), Some(303.0), false)),
             "0:11 / 5:03"
         );
+    }
+}
+
+#[cfg(test)]
+mod hint_tests {
+    use super::*;
+
+    fn line_width(line: &Line<'_>) -> usize {
+        line.spans
+            .iter()
+            .map(|span| span.content.chars().count())
+            .sum()
+    }
+
+    #[test]
+    fn hints_fit_the_available_width() {
+        for focus in [Focus::NowPlaying, Focus::Queue] {
+            for width in [40u16, 41, 69, 70, 100, 160] {
+                for line in help_lines(focus, width) {
+                    assert!(
+                        line_width(&line) <= usize::from(width),
+                        "hint too wide for {width}: {:?}",
+                        line
+                    );
+                }
+            }
+        }
     }
 }
 
