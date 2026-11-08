@@ -8,7 +8,7 @@ use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Bar, BarChart, BarGroup, Block, Gauge, List, ListItem, ListState, Padding, Paragraph, Wrap,
+    Bar, BarChart, BarGroup, Block, List, ListItem, ListState, Padding, Paragraph, Wrap,
 };
 use ratatui_image::StatefulImage;
 use ratatui_image::picker::Picker;
@@ -994,31 +994,15 @@ impl App {
             lines[1],
         );
 
-        let ratio = match (self.status.time_pos, self.status.duration) {
-            (Some(position), Some(duration)) if duration > 0.0 => {
-                (position / duration).clamp(0.0, 1.0)
-            }
-            _ => 0.0,
-        };
-        let ratio = if ratio.is_finite() { ratio } else { 0.0 };
-        let label = if self.status.idle {
-            "idle".to_string()
-        } else {
-            format!(
-                "{} / {}",
-                player::format_time(self.status.time_pos),
-                player::format_time(self.status.duration)
-            )
-        };
-        let label_style = Style::default()
-            .fg(Color::Black)
-            .bg(Color::Cyan)
-            .add_modifier(Modifier::BOLD);
-        let gauge = Gauge::default()
-            .gauge_style(Style::default().fg(Color::Cyan))
-            .ratio(ratio)
-            .label(Span::styled(label, label_style));
-        frame.render_widget(gauge, lines[2]);
+        frame.render_widget(
+            Paragraph::new(progress_line(
+                lines[2].width,
+                self.status.time_pos,
+                self.status.duration,
+                self.status.idle,
+            )),
+            lines[2],
+        );
 
         let queue = if self.status.playlist_count > 0 && self.status.playlist_pos >= 0 {
             format!(
@@ -1250,6 +1234,73 @@ impl App {
     }
 }
 
+fn progress_line(
+    width: u16,
+    position: Option<f64>,
+    duration: Option<f64>,
+    idle: bool,
+) -> Line<'static> {
+    if idle {
+        return Line::from(Span::styled("idle", Style::default().fg(Color::DarkGray)));
+    }
+    if width == 0 {
+        return Line::default();
+    }
+
+    let elapsed = player::format_time(position);
+    let duration_text = player::format_time(duration);
+    let ratio = match (position, duration) {
+        (Some(position), Some(duration))
+            if position.is_finite() && duration.is_finite() && duration > 0.0 =>
+        {
+            (position / duration).clamp(0.0, 1.0)
+        }
+        _ => 0.0,
+    };
+
+    let bar_width = usize::from(width).saturating_sub(elapsed.len() + duration_text.len() + 2);
+    if bar_width < 3 {
+        return Line::from(Span::styled(
+            format!("{elapsed} / {duration_text}"),
+            Style::default().fg(Color::Gray),
+        ));
+    }
+
+    let mut filled = (ratio * bar_width as f64).round() as usize;
+    if ratio > 0.0 && filled == 0 {
+        filled = 1;
+    }
+    let filled = filled.min(bar_width);
+    let empty = bar_width - filled;
+
+    let mut spans = Vec::with_capacity(5);
+    spans.push(Span::styled(
+        elapsed,
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD),
+    ));
+    spans.push(Span::raw(" "));
+    if filled > 0 {
+        spans.push(Span::styled(
+            "━".repeat(filled),
+            Style::default().fg(Color::Cyan),
+        ));
+    }
+    if empty > 0 {
+        spans.push(Span::styled(
+            "─".repeat(empty),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    spans.push(Span::raw(" "));
+    spans.push(Span::styled(
+        duration_text,
+        Style::default().fg(Color::DarkGray),
+    ));
+    Line::from(spans)
+}
+
 fn display_name(filename: &str) -> String {
     let stem = Path::new(filename)
         .file_stem()
@@ -1365,6 +1416,51 @@ fn lerp_rgb(from: (u8, u8, u8), to: (u8, u8, u8), amount: f32) -> (u8, u8, u8) {
         (start as f32 + (end as f32 - start as f32) * amount.clamp(0.0, 1.0)) as u8
     };
     (mix(from.0, to.0), mix(from.1, to.1), mix(from.2, to.2))
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+
+    fn text(line: Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
+    }
+
+    #[test]
+    fn progress_line_fills_available_width() {
+        for width in [20, 40, 80] {
+            let rendered = text(progress_line(width, Some(11.0), Some(303.0), false));
+            assert_eq!(rendered.chars().count(), usize::from(width));
+            assert!(rendered.starts_with("0:11 "));
+            assert!(rendered.ends_with(" 5:03"));
+            assert!(rendered.contains('━'));
+            assert!(rendered.contains('─'));
+        }
+    }
+
+    #[test]
+    fn progress_line_handles_extremes_and_idle() {
+        let empty = text(progress_line(40, Some(0.0), Some(100.0), false));
+        assert!(!empty.contains('━'));
+        assert!(empty.contains('─'));
+
+        let full = text(progress_line(40, Some(100.0), Some(100.0), false));
+        assert!(!full.contains('─'));
+        assert!(full.contains('━'));
+
+        assert_eq!(text(progress_line(40, None, None, true)), "idle");
+    }
+
+    #[test]
+    fn narrow_progress_line_falls_back_to_times() {
+        assert_eq!(
+            text(progress_line(10, Some(11.0), Some(303.0), false)),
+            "0:11 / 5:03"
+        );
+    }
 }
 
 #[cfg(test)]
