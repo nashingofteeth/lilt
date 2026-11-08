@@ -1,6 +1,8 @@
 use anyhow::{Context, Result, anyhow};
 use ratatui::Frame;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::execute;
+use ratatui::crossterm::terminal::SetTitle;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -41,6 +43,7 @@ pub fn run(config: &Config) -> Result<()> {
     app.refresh();
 
     let mut terminal = ratatui::try_init().context("initializing terminal")?;
+    let _ = execute!(std::io::stdout(), SetTitle("music controls"));
     let _guard = TermGuard;
 
     let old_hook = std::panic::take_hook();
