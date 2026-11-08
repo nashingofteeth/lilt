@@ -169,11 +169,19 @@ pub fn append_paths(config: &Config, paths: &[PathBuf]) -> Result<()> {
     let (playlist, _count) = queue::build_playlist(config, paths)?;
     let result = (|| -> Result<()> {
         let mut client = Mpv::connect(&config.socket)?;
+        let status = client.status()?;
+        let start_index = status.playlist_count;
+        let was_idle = status.idle;
         client.command_values(vec![
             json!("loadlist"),
             json!(playlist.to_string_lossy()),
             json!("append"),
         ])?;
+        // Appending to an idle player fills the queue but does not start it;
+        // jump to the first newly appended entry in that case.
+        if was_idle {
+            client.command_values(vec![json!("playlist-play-index"), json!(start_index)])?;
+        }
         set_bool(&mut client, "pause", false)?;
         Ok(())
     })();

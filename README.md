@@ -84,32 +84,47 @@ detached mpv daemon and exits, so the picker window closes immediately.
 
 ### Control panel
 
-`music controls` is a ratatui UI with two views:
+`music controls` is a ratatui UI. If the queue is empty when it opens, it
+automatically runs the add picker first, so you land on the panel with music
+already queued.
 
-- **Now Playing** — artist/album, title, progress bar, time, volume,
-  shuffle/repeat, queue position.
-- **Queue** (`Tab`) — the whole playlist with the current track marked;
-  `↑/↓` or `j/k`, `PgUp/PgDn`, `g/G`, `Enter` to switch to a track,
-  `Tab`/`Esc` to go back.
-- **Browse actions** — `b` opens the fzf artist/album picker and replaces the
-  queue (switch what's playing); `a` opens it and appends the selection to the
-  queue. The picker temporarily takes over the terminal, then returns to the
-  panel.
+**Now Playing**
 
 | Key | Action |
 | --- | --- |
 | `space` | pause/resume |
-| `n` / `p` | next / previous |
-| `←` / `→` | seek −10s / +10s |
-| `↑` / `↓` | volume +5 / −5 |
-| `s` | toggle shuffle |
-| `r` | cycle repeat (off → all → one) |
-| `m` | mute |
-| `b` | browse library → play now (replace queue) |
+| `j` / `k` | next / previous track |
+| `h` / `l` | seek −10s / +10s |
+| `-` / `+` | volume −5 / +5 |
+| `g` / `gg` / `G` | first track / first track / last track |
+| `s` / `r` / `m` | shuffle / repeat / mute |
+| `o` | browse library → play now (replace queue) |
 | `a` | browse library → add to queue |
 | `Tab` | queue view |
-| `q` | detach (playback continues) |
-| `Q` | quit mpv |
+| `/` | queue view with a fresh filter |
+| `?` | full help overlay |
+| `q` / `Q` | detach / quit mpv |
+
+**Queue**
+
+| Key | Action |
+| --- | --- |
+| `j` / `k` | move selection |
+| `g` / `gg` / `G` | first / first / last |
+| `Ctrl-d` / `Ctrl-u` | half-page down / up |
+| `Ctrl-f` / `Ctrl-b` | full-page down / up |
+| `Enter` | switch to the selected track |
+| `/` | filter by title/filename |
+| `Esc` | clear the filter, else go back |
+| `o` / `a` | play picker / add picker |
+| `Tab` | back to Now Playing |
+| `?` | full help overlay |
+| `q` / `Q` | detach / quit mpv |
+
+- `b` is an alias for `o`; arrow keys and `n`/`p` remain aliases.
+- The `/` filter is case-insensitive; `Enter` keeps it, `Esc` clears it.
+- `gg` uses a 500ms pending-`g` state; a single `g` also goes first after the timeout.
+- The picker (fzf) temporarily takes over the terminal, then returns to the panel.
 
 The UI polls mpv over one persistent socket, reconnects if the daemon restarts,
 and restores the terminal on exit.
