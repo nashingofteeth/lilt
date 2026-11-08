@@ -359,8 +359,8 @@ cmd_status() {
         return 0
     fi
 
-    icon="▶"
-    [ "$paused" = "true" ] && icon="⏸"
+    icon=">"
+    [ "$paused" = "true" ] && icon="||"
 
     now="$title"
     [ -n "$artist" ] && now="$artist — $title"
@@ -678,17 +678,52 @@ cmd_controls() {
     [ -t 0 ] && [ -t 1 ] || die "controls needs an interactive terminal"
     mpv_alive || ensure_daemon
 
-    local old_stty key rest
+    local old_stty key rest cols width line1 line2 l frame prev_frame
+    local help1='space pause · n/p next/prev · ←/→ seek 10s'
+    local help2='↑/↓ volume 5 · s shuffle · r repeat · q detach · Q quit'
+    local -a status_lines
+
     old_stty=$(stty -g)
-    trap 'stty "$old_stty"; printf "\033[?25h"' EXIT INT TERM
+    trap 'stty "$old_stty"; printf "\033[?25h\033[?1049l"' EXIT INT TERM
     stty raw -echo
-    printf '\033[?25l'
+    printf '\033[?1049h\033[?25l\033[H\033[2J'
+    prev_frame=""
 
     while :; do
-        printf '\033[H\033[2J'
-        cmd_status
-        printf '\nspace pause · n/p next/prev · ←/→ seek 10s · ↑/↓ vol 5\n'
-        printf 's shuffle · r repeat · q detach · Q quit mpv\n'
+        cols=$(tput cols 2>/dev/null || true)
+        [ -n "${cols:-}" ] || cols=${COLUMNS:-80}
+        (( cols > 20 )) || cols=80
+        width=$((cols - 1))
+
+        mapfile -t status_lines < <(cmd_status)
+        line1=""
+        line2=""
+        for l in "${status_lines[@]}"; do
+            case "$l" in
+                'library: mounted at '*) ;;               # hide when healthy
+                'library: not mounted'*) line1="$l" ;;    # keep the warning
+                *)
+                    if [ -z "$line1" ]; then
+                        line1="$l"
+                    else
+                        line2="$l"
+                    fi
+                    ;;
+            esac
+        done
+
+        # Redraw in place, and only when the content or width changed; no
+        # full-screen clears, which is what made the panel flicker.
+        frame="$cols"$'\n'"$line1"$'\n'"$line2"
+        if [ "$frame" != "$prev_frame" ]; then
+            printf '\033[H'
+            printf '%s\033[K\n' "${line1:0:width}"
+            printf '\033[K\n'
+            printf '%s\033[K\n' "${help1:0:width}"
+            printf '%s\033[K\n' "${help2:0:width}"
+            printf '\033[J'
+            prev_frame="$frame"
+        fi
 
         key=""
         IFS= read -rsn1 -t 1 key || true
@@ -713,11 +748,11 @@ cmd_controls() {
             q) break ;;
             Q) cmd_quit >/dev/null 2>&1 || true; break ;;
         esac
+        prev_frame=""
     done
 
     stty "$old_stty"
-    printf '\033[?25h\033[H\033[2J'
-    cmd_status
+    printf '\033[?25h\033[?1049l'
     trap - EXIT INT TERM
 }
 

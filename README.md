@@ -84,6 +84,10 @@ case-insensitive search under the mount.
 | `q` | detach (playback continues) |
 | `Q` | quit mpv |
 
+The panel uses the terminal's alternate screen, redraws only changed lines, and
+truncates to the window width so long titles never wrap. On exit it restores
+the previous screen.
+
 ## Configuration
 
 Defaults:
