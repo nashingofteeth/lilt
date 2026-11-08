@@ -38,6 +38,7 @@ Current playback/queue mapping:
 | --- | --- | --- |
 | play/replace queue | `play [PATH]` | `o` |
 | add to queue | `add PATH...` | `a` |
+| list queue | `queue` (alias `list`) | Queue pane |
 | toggle/pause/resume | `toggle`, `pause`, `resume` | `space` |
 | next/previous | `next`, `prev` | `n`, `p`, `j`, `k` |
 | stop (keep mpv) | `stop` | `x` |

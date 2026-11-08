@@ -46,6 +46,9 @@ enum Command {
     },
     /// Pick artists and albums with fzf
     Browse,
+    /// List the current queue
+    #[command(visible_alias = "list")]
+    Queue,
     /// Toggle pause
     Toggle,
     /// Pause playback
@@ -121,6 +124,7 @@ fn run() -> Result<()> {
         Command::Play { path, shuffle } => player::play(&config, path.as_deref(), shuffle),
         Command::Add { paths } => player::add(&config, &paths),
         Command::Browse => browse::browse(&config),
+        Command::Queue => player::queue(&config),
         Command::Toggle => player::toggle(&config),
         Command::Pause => player::pause(&config),
         Command::Resume => player::resume(&config),

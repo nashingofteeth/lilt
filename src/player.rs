@@ -1,6 +1,6 @@
 use anyhow::{Result, bail};
 use serde_json::json;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::config::Config;
@@ -24,6 +24,22 @@ pub fn format_time(value: Option<f64>) -> String {
             }
         }
         _ => "--:--".to_string(),
+    }
+}
+
+pub fn display_name(filename: &str) -> String {
+    let stem = Path::new(filename)
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or(filename);
+    let tail = stem.rsplit(" - ").next().unwrap_or(stem);
+    let cleaned = tail.trim_start_matches(|character: char| {
+        character.is_ascii_digit() || matches!(character, ' ' | '.' | '_' | '-')
+    });
+    if cleaned.is_empty() {
+        stem.to_string()
+    } else {
+        cleaned.to_string()
     }
 }
 
@@ -84,6 +100,37 @@ pub fn status(config: &Config) -> Result<()> {
 
     let mut client = Mpv::connect(&config.socket)?;
     println!("{}", status_line(&client.status()?));
+    Ok(())
+}
+
+pub fn queue(config: &Config) -> Result<()> {
+    let mut client = match Mpv::connect(&config.socket) {
+        Ok(client) => client,
+        Err(_) => {
+            println!("mpv: not running");
+            return Ok(());
+        }
+    };
+    let current = client
+        .get("playlist-pos")
+        .ok()
+        .and_then(|value| value.as_i64())
+        .unwrap_or(-1);
+    let entries = client.playlist()?;
+
+    if entries.is_empty() {
+        println!("queue empty");
+        return Ok(());
+    }
+
+    for (index, entry) in entries.iter().enumerate() {
+        let marker = if index as i64 == current { ">" } else { " " };
+        let name = entry
+            .title
+            .clone()
+            .unwrap_or_else(|| display_name(&entry.filename));
+        println!("{marker} {:>4}  {name}", index + 1);
+    }
     Ok(())
 }
 

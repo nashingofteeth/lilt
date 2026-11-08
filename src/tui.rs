@@ -359,7 +359,7 @@ impl App {
                 let name = entry
                     .title
                     .clone()
-                    .unwrap_or_else(|| display_name(&entry.filename));
+                    .unwrap_or_else(|| player::display_name(&entry.filename));
                 format!("{marker} {:>4}  {name}", index + 1)
             })
             .collect();
@@ -1308,22 +1308,6 @@ fn progress_line(
     Line::from(spans)
 }
 
-fn display_name(filename: &str) -> String {
-    let stem = Path::new(filename)
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .unwrap_or(filename);
-    let tail = stem.rsplit(" - ").next().unwrap_or(stem);
-    let cleaned = tail.trim_start_matches(|character: char| {
-        character.is_ascii_digit() || matches!(character, ' ' | '.' | '_' | '-')
-    });
-    if cleaned.is_empty() {
-        stem.to_string()
-    } else {
-        cleaned.to_string()
-    }
-}
-
 fn border_style(focused: bool) -> Style {
     if focused {
         Style::default().fg(Color::Cyan)
@@ -1507,7 +1491,7 @@ mod fuzz_tests {
         let mut rng = Rng::new(7);
         for _ in 0..cases(5_000) {
             let input = rng.string(100);
-            let _ = display_name(&input);
+            let _ = player::display_name(&input);
         }
     }
 }

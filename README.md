@@ -63,6 +63,7 @@ Playback
   music play [PATH] [--shuffle]  Replace the queue. No PATH = whole library shuffled
   music add PATH...              Append albums/artists/tracks
   music browse                   Pick artists and albums with fzf
+  music queue                    List the queue, current track marked
   music toggle | pause | resume
   music next | prev | stop
   music mute [on|off|toggle]
@@ -76,6 +77,9 @@ Playback
   music restart                  Quit mpv and unmount the library
   music logs [-f]                Tail rclone/mpv logs
 ```
+
+`music queue` prints one numbered track per line, with `>` marking the current
+track; `music list` is an alias.
 
 `PATH` may be absolute, relative to the current directory, or relative to the
 music mount — so `music play "Brian Eno"` and
