@@ -1,14 +1,14 @@
 # music
 
-A small wrapper around [mpv](https://mpv.io/) for playing a music library that
+A Rust wrapper around [mpv](https://mpv.io/) for playing a music library that
 lives behind an [rclone](https://rclone.org/) mount.
 
 It does three things:
 
 - mounts the library (`rclone mount`, read-only) when asked,
 - keeps one detached, audio-only mpv process running with an IPC socket,
-- forwards simple commands (`play`, `next`, `pause`, `seek`, …) to that process
-  from any terminal.
+- forwards commands (`play`, `next`, `pause`, `seek`, …) to that process from
+  any terminal, with a full-screen ratatui control panel.
 
 Because mpv stays alive in the background, playback continues after the
 terminal that started it is closed, and the next command works from anywhere.
@@ -17,31 +17,32 @@ keys and MPRIS panels work too.
 
 ## Requirements
 
-- `bash`, `mpv`, `rclone`, `python3`, `jq`
+- `mpv`, `rclone`
 - `fzf` for `music browse`
 - `fusermount3` (util-linux) for `music unmount`
+- `tail` (coreutils) for `music logs -f`
 - optional: `mpv-mpris` for hardware media keys
 
-Linux only: the script uses `mountpoint`, `fusermount3`, and
+Linux only: the player uses `mountpoint`, `fusermount3`, `setsid`, and
 `XDG_RUNTIME_DIR`.
 
-## Install
-
-Clone the repo to `~/music` and put the executable on `PATH`:
+## Build and install
 
 ```sh
-git clone <repo-url> ~/music
-ln -s ../../music/bin/music ~/.local/bin/music
-ln -s ../../../music/completions/music.fish ~/.config/fish/completions/music.fish
-```
+cargo build --release
+./target/release/music --help
 
-(The symlinks are relative, so a different `$HOME` works as long as the repo
-is cloned to `~/music`.)
+# Install `music` into ~/.cargo/bin
+./scripts/install.sh
+
+# Format, lint, and test
+./scripts/check.sh
+```
 
 ## Usage
 
-Run `music mount` to mount the library in the foreground (`Ctrl-C` unmounts).
-Run `music help` (or just `music`) for the command list. Everything else:
+`music mount` mounts the library in the foreground (`Ctrl-C` unmounts). `music`
+or `music help` shows the command list.
 
 ```
 Library
@@ -59,7 +60,7 @@ Playback
   music seek N|-N|N%
   music shuffle [on|off|toggle]
   music repeat [off|all|one]
-  music controls                 Single-key control panel
+  music controls                 Full-screen control panel
   music quit                     Stop and exit mpv
   music restart                  Quit mpv and unmount the library
   music logs [-f]                Tail rclone/mpv logs
@@ -75,7 +76,12 @@ detached mpv daemon and exits, so the picker window closes immediately.
 
 ### Control panel
 
-`music controls` draws a status line and reads single keys:
+`music controls` is a ratatui UI with two views:
+
+- **Now Playing** — artist/album, title, progress bar, time, volume,
+  shuffle/repeat, queue position.
+- **Queue** (`Tab`) — the whole playlist with the current track marked;
+  `↑/↓` or `j/k`, `PgUp/PgDn`, `g/G`, `Enter` to play, `Tab`/`Esc` to go back.
 
 | Key | Action |
 | --- | --- |
@@ -85,30 +91,28 @@ detached mpv daemon and exits, so the picker window closes immediately.
 | `↑` / `↓` | volume +5 / −5 |
 | `s` | toggle shuffle |
 | `r` | cycle repeat (off → all → one) |
+| `m` | mute |
+| `Tab` | queue view |
 | `q` | detach (playback continues) |
 | `Q` | quit mpv |
 
-The panel uses the terminal's alternate screen, redraws only changed lines, and
-truncates to the window width so long titles never wrap. On exit it restores
-the previous screen.
+The UI polls mpv over one persistent socket, reconnects if the daemon restarts,
+and restores the terminal on exit.
 
 ## Configuration
 
 Defaults:
 
-```sh
-MUSIC_DIR="$HOME/Music"
-MUSIC_REMOTE="sam:/Volumes/NASH_SYNC/music/library"
+```toml
+# ~/.config/music/config.toml (optional)
+music_dir = "~/Music"
+remote = "sam:/Volumes/NASH_SYNC/music/library"
+mpv_extra_args = []
 ```
 
-Override them with environment variables or `~/.config/music/config` (a shell
-fragment sourced by the script). Environment variables take precedence over
-the config file, so you can temporarily override a default:
-
-```sh
-MUSIC_REMOTE="nas:/music"
-MUSIC_DIR="$HOME/Music"
-```
+`MUSIC_DIR` and `MUSIC_REMOTE` environment variables override the file.
+`mpv_extra_args` is appended to the daemon's mpv command line (useful for
+testing with `--ao=null`).
 
 ### Gapless playback
 
@@ -128,34 +132,32 @@ would be a local rclone VFS cache rather than larger demux buffers.
 
 ## How it works
 
-- `rclone mount <remote> <MUSIC_DIR> --read-only`
-- one mpv process:
+- `rclone mount <remote> <music_dir> --read-only --dir-cache-time=10m`
+- one detached mpv process:
   `mpv --idle --no-video --no-terminal --input-ipc-server=…/mpv.sock`
-- commands are JSON messages sent to the socket by an embedded Python helper;
-  `status` requests player properties in one batch and formats them with `jq`
+- the Rust binary talks to mpv over JSON on the Unix socket; all commands and
+  properties are handled in-process (no Python or jq)
+- explicit paths/albums are expanded by the wrapper into an m3u using an
+  audio-extension allowlist (hidden files and AppleDouble `._*` sidecars are
+  skipped); whole-library shuffle lets mpv expand the directory asynchronously
 - state lives outside the repo:
   - socket: `${XDG_RUNTIME_DIR:-/tmp}/music-mount-$UID/mpv.sock`
   - logs and pid files: `~/.cache/music/`
 
-Queues are built by the wrapper as m3u playlists from an audio-extension
-allowlist (`build_playlist`), so mpv never scans a directory itself. Only known
-audio files are included; hidden files and AppleDouble `._*` sidecars are
-skipped, as are cover images, cue sheets, playlists, and .nfo files.
-
 ## Desktop integration
 
-Example [niri](https://github.com/YaLTeR/niri) binding for a floating fzf
-picker:
+Example [niri](https://github.com/YaLTeR/niri) binding for a floating controls
+window:
 
 ```kdl
-Mod+M { spawn-sh "ghostty --class=music-browse -e $HOME/.local/bin/music browse"; }
+Mod+M { spawn-sh "ghostty --class=music-controls -e $HOME/.cargo/bin/music controls"; }
 ```
 
 ```kdl
 window-rule {
-    match app-id=r#"^music-browse$"#
+    match app-id=r#"^music-controls$"#
     open-floating true
-    default-column-width { proportion 0.6; }
-    default-window-height { proportion 0.7; }
+    default-column-width { proportion 0.7; }
+    default-window-height { proportion 0.55; }
 }
 ```
