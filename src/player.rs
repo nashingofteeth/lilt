@@ -242,39 +242,39 @@ pub fn stop(config: &Config) -> Result<()> {
 }
 
 pub fn volume(config: &Config, value: &str) -> Result<()> {
-    let mut client = connect(config)?;
-    if let Some(value) = value.strip_prefix('+') {
+    let command = if let Some(value) = value.strip_prefix('+') {
         let amount = parse_number(value, "volume")?;
-        client.command_values(vec![json!("add"), json!("volume"), json!(amount)])?;
+        vec![json!("add"), json!("volume"), json!(amount)]
     } else if value.starts_with('-') {
         let amount = parse_number(value, "volume")?;
-        client.command_values(vec![json!("add"), json!("volume"), json!(amount)])?;
+        vec![json!("add"), json!("volume"), json!(amount)]
     } else {
         let amount = parse_number(value, "volume")?;
-        client.command_values(vec![json!("set_property"), json!("volume"), json!(amount)])?;
-    }
+        vec![json!("set_property"), json!("volume"), json!(amount)]
+    };
+
+    let mut client = connect(config)?;
+    client.command_values(command)?;
     Ok(())
 }
 
 pub fn seek(config: &Config, value: &str) -> Result<()> {
-    let mut client = connect(config)?;
-    if let Some(percent) = value.strip_suffix('%') {
+    let command = if let Some(percent) = value.strip_suffix('%') {
         let amount = parse_number(percent, "seek")?;
-        client.command_values(vec![
-            json!("seek"),
-            json!(amount),
-            json!("absolute-percent"),
-        ])?;
+        vec![json!("seek"), json!(amount), json!("absolute-percent")]
     } else if let Some(relative) = value.strip_prefix('+') {
         let amount = parse_number(relative, "seek")?;
-        client.command_values(vec![json!("seek"), json!(amount), json!("relative")])?;
+        vec![json!("seek"), json!(amount), json!("relative")]
     } else if value.starts_with('-') {
         let amount = parse_number(value, "seek")?;
-        client.command_values(vec![json!("seek"), json!(amount), json!("relative")])?;
+        vec![json!("seek"), json!(amount), json!("relative")]
     } else {
         let amount = parse_number(value, "seek")?;
-        client.command_values(vec![json!("seek"), json!(amount), json!("absolute")])?;
-    }
+        vec![json!("seek"), json!(amount), json!("absolute")]
+    };
+
+    let mut client = connect(config)?;
+    client.command_values(command)?;
     Ok(())
 }
 
