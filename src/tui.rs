@@ -4,16 +4,16 @@ use ratatui::Frame;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::SetTitle;
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect, Size};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Bar, BarChart, BarGroup, Block, List, ListItem, ListState, Padding, Paragraph, Wrap,
 };
-use ratatui_image::StatefulImage;
 use ratatui_image::picker::Picker;
 use ratatui_image::picker::cap_parser::QueryStdioOptions;
 use ratatui_image::protocol::StatefulProtocol;
+use ratatui_image::{Resize, StatefulImage};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -925,8 +925,14 @@ impl App {
                 Constraint::Min(0),
             ])
             .split(inner);
-            if let Some(protocol) = self.cover_protocol.as_mut() {
-                frame.render_stateful_widget(StatefulImage::new(), chunks[0], protocol);
+            let image_area = self.cover_protocol.as_ref().map(|protocol| {
+                let size = protocol.size_for(Resize::Fit(None), chunks[0].as_size());
+                centered_area(chunks[0], size)
+            });
+            if let Some(image_area) = image_area
+                && let Some(protocol) = self.cover_protocol.as_mut()
+            {
+                frame.render_stateful_widget(StatefulImage::new(), image_area, protocol);
             } else {
                 self.draw_cover_placeholder(frame, chunks[0]);
             }
@@ -1195,6 +1201,17 @@ impl App {
         }
 
         frame.render_widget(Paragraph::new(""), area);
+    }
+}
+
+fn centered_area(area: Rect, size: Size) -> Rect {
+    let width = size.width.min(area.width);
+    let height = size.height.min(area.height);
+    Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
     }
 }
 
@@ -1651,6 +1668,16 @@ mod cover_placeholder_tests {
         assert!(text.contains(&path));
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn cover_area_is_centered_and_clamped() {
+        let area = Rect::new(10, 20, 30, 14);
+        assert_eq!(
+            centered_area(area, Size::new(20, 10)),
+            Rect::new(15, 22, 20, 10)
+        );
+        assert_eq!(centered_area(area, Size::new(50, 20)), area);
     }
 
     #[test]
