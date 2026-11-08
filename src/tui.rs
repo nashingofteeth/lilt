@@ -949,8 +949,13 @@ impl App {
         ])
         .split(text_block);
 
+        let path_fallback = !self.status.has_title_tag && !self.status.path.is_empty();
         let context = if self.status.artist.is_empty() && self.status.album.is_empty() {
-            "mpv".to_string()
+            if path_fallback {
+                "file".to_string()
+            } else {
+                "mpv".to_string()
+            }
         } else if self.status.album.is_empty() {
             self.status.artist.clone()
         } else if self.status.artist.is_empty() {
@@ -959,7 +964,9 @@ impl App {
             format!("{} — {}", self.status.artist, self.status.album)
         };
 
-        let title_text = if self.status.media_title.is_empty() {
+        let title_text = if path_fallback {
+            self.status.path.as_str()
+        } else if self.status.media_title.is_empty() {
             "Nothing playing"
         } else {
             self.status.media_title.as_str()
@@ -1418,6 +1425,7 @@ mod layout_fuzz_tests {
                     artist: rng.string(40),
                     album: rng.string(40),
                     path: rng.string(80),
+                    has_title_tag: rng.boolean(),
                     time_pos: if rng.boolean() {
                         Some(rng.f64_bits())
                     } else {
@@ -1509,7 +1517,9 @@ mod cover_placeholder_tests {
         std::fs::create_dir_all(&music).unwrap();
         let config = test_config(music.clone(), &base);
         let mut app = App::new(config);
-        app.status.path = music.join("song.flac").display().to_string();
+        let path = music.join("song.flac").display().to_string();
+        app.status.path = path.clone();
+        app.status.media_title = "song.flac".to_string();
         app.cover_dir = Some(music.clone());
 
         let (sender, receiver) = mpsc::channel();
@@ -1517,12 +1527,37 @@ mod cover_placeholder_tests {
         let text = rendered_text(&mut app);
         assert!(text.contains("♪"));
         assert!(text.contains("loading…"));
+        assert!(text.contains(&path));
+        assert!(text.contains("file"));
 
         drop(sender);
         app.cover_pending = None;
         let text = rendered_text(&mut app);
         assert!(text.contains("♪"));
         assert!(text.contains("no cover"));
+        assert!(text.contains(&path));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn tagged_title_wins_over_path_fallback() {
+        let base = unique_base("tui-title");
+        let music = base.join("Music");
+        std::fs::create_dir_all(&music).unwrap();
+        let config = test_config(music.clone(), &base);
+        let mut app = App::new(config);
+        let path = music.join("song.flac").display().to_string();
+        app.status.path = path.clone();
+        app.status.has_title_tag = true;
+        app.status.media_title = "Real Title".to_string();
+        app.status.artist = "Artist".to_string();
+        app.status.album = "Album".to_string();
+
+        let text = rendered_text(&mut app);
+        assert!(text.contains("Real Title"));
+        assert!(text.contains("Artist — Album"));
+        assert!(!text.contains(&path));
 
         let _ = std::fs::remove_dir_all(&base);
     }

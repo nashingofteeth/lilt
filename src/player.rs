@@ -458,6 +458,7 @@ mod status_fuzz_tests {
                 artist: rng.string(40),
                 album: rng.string(40),
                 path: rng.string(80),
+                has_title_tag: rng.boolean(),
                 time_pos: if rng.boolean() {
                     Some(rng.f64_bits())
                 } else {

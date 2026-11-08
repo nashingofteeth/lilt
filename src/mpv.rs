@@ -31,6 +31,7 @@ pub struct Status {
     pub artist: String,
     pub album: String,
     pub path: String,
+    pub has_title_tag: bool,
     pub time_pos: Option<f64>,
     pub duration: Option<f64>,
     pub paused: bool,
@@ -137,10 +138,12 @@ impl Mpv {
         let mut artist = String::new();
         let mut album_artist = String::new();
         let mut album = String::new();
+        let mut has_title_tag = false;
         if let Some(Value::Object(metadata)) = self.try_get("metadata")? {
             for (key, value) in metadata {
                 let Some(text) = value.as_str() else { continue };
                 match key.to_ascii_lowercase().as_str() {
+                    "title" => has_title_tag |= !text.trim().is_empty(),
                     "artist" => artist = text.to_string(),
                     "album_artist" | "albumartist" => album_artist = text.to_string(),
                     "album" => album = text.to_string(),
@@ -205,6 +208,7 @@ impl Mpv {
             artist,
             album,
             path,
+            has_title_tag,
             time_pos,
             duration,
             paused,
