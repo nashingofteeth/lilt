@@ -40,8 +40,8 @@ is cloned to `~/music`.)
 
 ## Usage
 
-Run `music` with no arguments to mount the library in the foreground
-(`Ctrl-C` unmounts). Everything else:
+Run `music mount` to mount the library in the foreground (`Ctrl-C` unmounts).
+Run `music help` (or just `music`) for the command list. Everything else:
 
 ```
 Library

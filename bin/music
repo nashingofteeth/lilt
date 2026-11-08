@@ -48,7 +48,7 @@ usage() {
     cat <<'EOF'
 Usage: music [command] [arguments]
 
-With no command, mount the music library (same as "music mount").
+With no command, print this help. Use "music mount" to mount the library.
 
 Library
   mount                    Mount the music library (foreground; Ctrl-C unmounts)
@@ -780,13 +780,14 @@ cmd_controls() {
 
 # ------------------------------------------------------------------- dispatch
 
-cmd="${1:-mount}"
+cmd="${1:-}"
 if [ $# -gt 0 ]; then
     shift
 fi
 
 case "$cmd" in
-    ""|mount) do_mount ;;
+    ""|help|-h|--help) usage ;;
+    mount) do_mount ;;
     unmount|umount) do_unmount ;;
     status|now) cmd_status ;;
     play) cmd_play "$@" ;;
@@ -805,6 +806,5 @@ case "$cmd" in
     quit) cmd_quit ;;
     controls|ui) cmd_controls ;;
     logs) cmd_logs "${1:-}" ;;
-    help|-h|--help) usage ;;
     *) die "unknown command: $cmd (try: music help)" ;;
 esac
