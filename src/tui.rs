@@ -274,6 +274,14 @@ impl App {
         self.cover_pending = Some((pending_dir, receiver));
     }
 
+    fn cover_slot(&self) -> bool {
+        self.cover_dir.is_some() && !self.status.path.is_empty()
+    }
+
+    fn cover_loading(&self) -> bool {
+        self.cover_pending.is_some()
+    }
+
     fn reload_playlist(&mut self) {
         let entries = match self.client() {
             Some(client) => client.playlist().ok(),
@@ -854,7 +862,7 @@ impl App {
         }
 
         let show_visualizer = self.visualizer_enabled && area.height >= 20;
-        let show_cover = self.cover_protocol.is_some() && area.width >= 64 && area.height >= 20;
+        let show_cover = self.cover_slot() && area.width >= 64 && area.height >= 20;
         let now_height = if show_cover {
             if area.height >= 40 {
                 16
@@ -901,7 +909,7 @@ impl App {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        let art_width = if self.cover_protocol.is_some() {
+        let art_width = if self.cover_slot() {
             inner
                 .height
                 .saturating_mul(2)
@@ -919,6 +927,8 @@ impl App {
             .split(inner);
             if let Some(protocol) = self.cover_protocol.as_mut() {
                 frame.render_stateful_widget(StatefulImage::new(), chunks[0], protocol);
+            } else {
+                self.draw_cover_placeholder(frame, chunks[0]);
             }
             chunks[2]
         } else {
@@ -1031,6 +1041,37 @@ impl App {
             Paragraph::new(state).style(Style::default().fg(Color::DarkGray)),
             lines[3],
         );
+    }
+
+    fn draw_cover_placeholder(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::bordered().border_style(Style::default().fg(Color::DarkGray));
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        if inner.height < 2 {
+            return;
+        }
+
+        let label = if self.cover_loading() {
+            "loading…"
+        } else {
+            "no cover"
+        };
+        let centered = Layout::vertical([
+            Constraint::Fill(1),
+            Constraint::Length(2),
+            Constraint::Fill(1),
+        ])
+        .split(inner)[1];
+        let lines = vec![
+            Line::from(Span::styled(
+                "♪",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(Span::styled(label, Style::default().fg(Color::DarkGray))),
+        ];
+        frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), centered);
     }
 
     fn draw_spectrum_pane(&self, frame: &mut Frame, area: Rect) {
@@ -1437,6 +1478,51 @@ mod layout_fuzz_tests {
             let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
             terminal.draw(|frame| app.draw(frame)).unwrap();
         }
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
+#[cfg(test)]
+mod cover_placeholder_tests {
+    use super::*;
+    use crate::test_support::{test_config, unique_base};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn rendered_text(app: &mut App) -> String {
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn shows_loading_and_missing_cover_placeholders() {
+        let base = unique_base("tui-cover");
+        let music = base.join("Music");
+        std::fs::create_dir_all(&music).unwrap();
+        let config = test_config(music.clone(), &base);
+        let mut app = App::new(config);
+        app.status.path = music.join("song.flac").display().to_string();
+        app.cover_dir = Some(music.clone());
+
+        let (sender, receiver) = mpsc::channel();
+        app.cover_pending = Some((music, receiver));
+        let text = rendered_text(&mut app);
+        assert!(text.contains("♪"));
+        assert!(text.contains("loading…"));
+
+        drop(sender);
+        app.cover_pending = None;
+        let text = rendered_text(&mut app);
+        assert!(text.contains("♪"));
+        assert!(text.contains("no cover"));
 
         let _ = std::fs::remove_dir_all(&base);
     }

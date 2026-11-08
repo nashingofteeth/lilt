@@ -103,7 +103,8 @@ next to the track (`cover`, `folder`, `front`, `album`, `artwork`, or `art` with
 `.jpg`, `.jpeg`, `.png`, or `.webp`) is used. Kitty, Sixel, and iTerm2 terminals
 get full-resolution graphics; other terminals fall back to Unicode halfblocks.
 Loading happens on a background thread so tracks on the rclone mount do not
-stall the UI.
+stall the UI. While art is loading or unavailable, the same area shows a small
+placeholder.
 
 **Common keys**
 
