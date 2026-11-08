@@ -1197,10 +1197,7 @@ fn render_spectrum(frame: &mut Frame, area: Rect, bands: &[f32], available: bool
     if width == 0 {
         return;
     }
-    let mut count = width.div_ceil(2).clamp(4, 64).min(bands.len());
-    while count > 1 && count * 2 - 1 > width {
-        count -= 1;
-    }
+    let (count, bar_width) = spectrum_columns(width, bands.len());
 
     let bars: Vec<Bar> = (0..count)
         .map(|index| {
@@ -1220,10 +1217,35 @@ fn render_spectrum(frame: &mut Frame, area: Rect, bands: &[f32], available: bool
 
     let chart = BarChart::default()
         .data(BarGroup::default().bars(&bars))
-        .bar_width(1)
+        .bar_width(bar_width)
         .bar_gap(1)
         .max(100);
     frame.render_widget(chart, area);
+}
+
+/// Pick the bar count and bar width that fill the available width as closely
+/// as possible, preferring more, thinner bars.
+fn spectrum_columns(width: usize, max_bars: usize) -> (usize, u16) {
+    let max_count = max_bars.clamp(1, 64);
+    if width == 0 {
+        return (1, 1);
+    }
+
+    let gap = 1usize;
+    let mut best_total = 0usize;
+    let mut best = (1usize, 1u16);
+
+    for bar_width in 1..=32u16 {
+        let bar = bar_width as usize;
+        let count = ((width + gap) / (bar + gap)).min(max_count).max(1);
+        let total = count * bar + (count.saturating_sub(1)) * gap;
+        if total <= width && total > best_total {
+            best_total = total;
+            best = (count, bar_width);
+        }
+    }
+
+    best
 }
 
 fn band_style(index: usize, count: usize) -> Style {
@@ -1584,6 +1606,51 @@ mod spectrum_fuzz_tests {
     use crate::test_support::{Rng, cases};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+
+    #[test]
+    fn spectrum_columns_fill_width() {
+        for width in [20, 40, 60, 96, 145, 200, 300, 500, 1_000] {
+            let (count, bar_width) = spectrum_columns(width, 64);
+            let total = count * bar_width as usize + count.saturating_sub(1);
+            assert!(count >= 1 && bar_width >= 1);
+            assert!(total <= width, "width {width}, total {total}");
+            assert!(
+                width - total <= bar_width as usize,
+                "width {width}, total {total}, bar_width {bar_width}"
+            );
+        }
+    }
+
+    #[test]
+    fn full_scale_bars_fill_near_the_right_edge() {
+        let width = 145u16;
+        let height = 10u16;
+        let bands = vec![1.0f32; 64];
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| render_spectrum(frame, frame.area(), &bands, true))
+            .unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let last = (0..width)
+            .rev()
+            .find(|&x| {
+                (0..height).any(|y| {
+                    buffer
+                        .cell(ratatui::layout::Position::new(x, y))
+                        .map(|cell| cell.symbol() != " ")
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(0);
+
+        let (count, bar_width) = spectrum_columns(width as usize, 64);
+        let total = count * bar_width as usize + count.saturating_sub(1);
+        assert!(
+            last as usize + 1 >= total.saturating_sub(1),
+            "last {last}, width {width}, total {total}"
+        );
+    }
 
     #[test]
     fn fuzz_spectrum_rendering_never_panics() {
