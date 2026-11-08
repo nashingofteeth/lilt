@@ -4,7 +4,7 @@ use ratatui::Frame;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::SetTitle;
-use ratatui::layout::{Alignment, Constraint, Layout, Rect, Size};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
@@ -13,7 +13,7 @@ use ratatui::widgets::{
 use ratatui_image::picker::Picker;
 use ratatui_image::picker::cap_parser::QueryStdioOptions;
 use ratatui_image::protocol::StatefulProtocol;
-use ratatui_image::{Resize, StatefulImage};
+use ratatui_image::{FontSize, StatefulImage};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -117,6 +117,7 @@ struct App {
     picker: Picker,
     cover_dir: Option<PathBuf>,
     cover_pending: Option<(PathBuf, Receiver<Option<DynamicImage>>)>,
+    cover_aspect: Option<f32>,
     cover_protocol: Option<StatefulProtocol>,
     visualizer: Option<Visualizer>,
     visualizer_enabled: bool,
@@ -146,6 +147,7 @@ impl App {
             picker: Picker::halfblocks(),
             cover_dir: None,
             cover_pending: None,
+            cover_aspect: None,
             cover_protocol: None,
             visualizer: None,
             visualizer_enabled: true,
@@ -231,6 +233,10 @@ impl App {
             match receiver.try_recv() {
                 Ok(image) => {
                     if self.cover_dir.as_ref() == Some(&dir) {
+                        self.cover_aspect = image.as_ref().and_then(|image| {
+                            (image.height() > 0)
+                                .then(|| image.width() as f32 / image.height() as f32)
+                        });
                         self.cover_protocol =
                             image.map(|image| self.picker.new_resize_protocol(image));
                     }
@@ -257,6 +263,7 @@ impl App {
 
         self.cover_dir = dir.clone();
         self.cover_pending = None;
+        self.cover_aspect = None;
         self.cover_protocol = None;
 
         let (Some(dir), Some(track)) = (dir, track) else {
@@ -910,11 +917,11 @@ impl App {
         frame.render_widget(block, area);
 
         let art_width = if self.cover_slot() {
-            inner
-                .height
-                .saturating_mul(2)
-                .min(30)
-                .min(inner.width.saturating_sub(31))
+            let font = self.picker.font_size();
+            let aspect = self.cover_aspect.unwrap_or(1.0);
+            let cell_aspect = aspect * (font.height.max(1) as f32 / font.width.max(1) as f32);
+            let desired = (inner.height as f32 * cell_aspect).round() as u16;
+            desired.min(30).min(inner.width.saturating_sub(31)).max(12)
         } else {
             0
         };
@@ -925,13 +932,8 @@ impl App {
                 Constraint::Min(0),
             ])
             .split(inner);
-            let image_area = self.cover_protocol.as_ref().map(|protocol| {
-                let size = protocol.size_for(Resize::Fit(None), chunks[0].as_size());
-                centered_area(chunks[0], size)
-            });
-            if let Some(image_area) = image_area
-                && let Some(protocol) = self.cover_protocol.as_mut()
-            {
+            let image_area = cover_area(chunks[0], self.cover_aspect, self.picker.font_size());
+            if let Some(protocol) = self.cover_protocol.as_mut() {
                 frame.render_stateful_widget(StatefulImage::new(), image_area, protocol);
             } else {
                 self.draw_cover_placeholder(frame, chunks[0]);
@@ -1204,12 +1206,34 @@ impl App {
     }
 }
 
-fn centered_area(area: Rect, size: Size) -> Rect {
-    let width = size.width.min(area.width);
-    let height = size.height.min(area.height);
+fn cover_area(area: Rect, aspect: Option<f32>, font: FontSize) -> Rect {
+    let aspect = aspect
+        .filter(|aspect| aspect.is_finite() && *aspect > 0.0)
+        .unwrap_or(1.0);
+    let font_width = font.width.max(1) as f32;
+    let font_height = font.height.max(1) as f32;
+    let cell_aspect = aspect * font_height / font_width;
+    if !cell_aspect.is_finite() || cell_aspect <= 0.0 || area.is_empty() {
+        return area;
+    }
+
+    let available_width = area.width as f32;
+    let available_height = area.height as f32;
+    let (width, height) = if available_width / available_height > cell_aspect {
+        let height = available_height;
+        let width = (height * cell_aspect).round().max(1.0);
+        (width, height)
+    } else {
+        let width = available_width;
+        let height = (width / cell_aspect).round().max(1.0);
+        (width, height)
+    };
+
+    let width = (width as u16).clamp(1, area.width);
+    let height = (height as u16).clamp(1, area.height);
     Rect {
-        x: area.x + area.width.saturating_sub(width) / 2,
-        y: area.y + area.height.saturating_sub(height) / 2,
+        x: area.x + (area.width - width) / 2,
+        y: area.y + (area.height - height) / 2,
         width,
         height,
     }
@@ -1591,6 +1615,7 @@ mod layout_fuzz_tests {
                 picker: Picker::halfblocks(),
                 cover_dir: None,
                 cover_pending: None,
+                cover_aspect: None,
                 cover_protocol: None,
                 visualizer: None,
                 visualizer_enabled: rng.boolean(),
@@ -1655,13 +1680,12 @@ mod cover_placeholder_tests {
     }
 
     #[test]
-    fn cover_area_is_centered_and_clamped() {
-        let area = Rect::new(10, 20, 30, 14);
-        assert_eq!(
-            centered_area(area, Size::new(20, 10)),
-            Rect::new(15, 22, 20, 10)
-        );
-        assert_eq!(centered_area(area, Size::new(50, 20)), area);
+    fn cover_area_matches_aspect_and_is_centered() {
+        let area = Rect::new(0, 0, 40, 14);
+        let font = FontSize::new(10, 20);
+        assert_eq!(cover_area(area, Some(1.0), font), Rect::new(6, 0, 28, 14));
+        assert_eq!(cover_area(area, Some(2.0), font), Rect::new(0, 2, 40, 10));
+        assert_eq!(cover_area(area, None, font), Rect::new(6, 0, 28, 14));
     }
 
     #[test]
