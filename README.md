@@ -46,7 +46,7 @@ Run `music help` (or just `music`) for the command list. Everything else:
 ```
 Library
   music mount                    Mount in the foreground
-  music unmount                  Stop playback, then unmount
+  music unmount                  Quit mpv, then unmount the library
   music status                   Mount state + now playing
 
 Playback
@@ -61,7 +61,7 @@ Playback
   music repeat [off|all|one]
   music controls                 Single-key control panel
   music quit                     Stop and exit mpv
-  music restart                  Quit mpv and unmount (for changing MUSIC_TIER)
+  music restart                  Quit mpv and unmount the library
   music logs [-f]                Tail rclone/mpv logs
 ```
 
@@ -108,37 +108,22 @@ the config file, so you can temporarily override a default:
 ```sh
 MUSIC_REMOTE="nas:/music"
 MUSIC_DIR="$HOME/Music"
-MUSIC_TIER=1
 ```
 
-### Gapless tuning (`MUSIC_TIER`)
+### Gapless playback
 
-Tracks are streamed over rclone, so the gap between tracks depends on how fast
-the next file can be opened. Four presets are available; they are independent
-(not cumulative), selected when the mount/mpv start:
+Tracks are streamed over the rclone mount, so the gap between tracks depends on
+how fast the next file can be opened. mpv is started with:
 
-| Tier | What it enables |
-| --- | --- |
-| `0` | Defaults (`--gapless-audio=yes`, 128 MiB demux cache, 20s readahead) |
-| `1` | mpv `--prefetch-playlist=yes`, `--audio-buffer=0.5`, 256 MiB / 30s demux cache |
-| `2` | rclone `--buffer-size=64M` (extra in-memory read-ahead) |
-| `3` | rclone `--vfs-cache-mode=full`, `--vfs-read-ahead=64M`, 10 GiB / 168h cache |
+- `--gapless-audio=yes` — keep the audio device open across files
+- `--prefetch-playlist=yes` — open the next playlist entry before the current one ends
+- `--audio-buffer=0.5` — buffer enough audio to cover the network open
+- `--demuxer-max-bytes=256MiB --demuxer-readahead-secs=30` — keep the next file ready early
 
-To A/B test them, restart between runs so the new flags take effect:
-
-```sh
-music restart
-MUSIC_TIER=1 music play "Album"
-music restart
-MUSIC_TIER=2 music play "Album"
-music restart
-MUSIC_TIER=3 music play "Album"
-music restart
-```
-
-`music play` detects a tier change and restarts the mpv daemon/mount
-automatically, but `music restart` makes the state explicit. Tier 3 stores
-downloaded audio under rclone's cache directory (default `~/.cache/rclone`).
+These are intentionally mpv-only: no rclone disk cache, so playback starts
+immediately and nothing is written to a cache directory. If a particular album
+still has gaps (for example, tracks with different sample rates), the next step
+would be a local rclone VFS cache rather than larger demux buffers.
 
 ## How it works
 

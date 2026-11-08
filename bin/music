@@ -7,11 +7,9 @@ set -euo pipefail
 
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/music/config"
 
-# Environment values win over the config file, so tiers can be A/B tested
-# with `MUSIC_TIER=n music ...` even when the config sets a default.
+# Environment values win over the config file.
 _env_music_dir="${MUSIC_DIR-}"
 _env_music_remote="${MUSIC_REMOTE-}"
-_env_music_tier="${MUSIC_TIER-}"
 
 # shellcheck disable=SC1090
 if [ -f "$CONFIG_FILE" ]; then
@@ -20,11 +18,9 @@ fi
 
 [ -n "$_env_music_dir" ] && MUSIC_DIR="$_env_music_dir"
 [ -n "$_env_music_remote" ] && MUSIC_REMOTE="$_env_music_remote"
-[ -n "$_env_music_tier" ] && MUSIC_TIER="$_env_music_tier"
 
 MUSIC_DIR="${MUSIC_DIR:-$HOME/Music}"
 MUSIC_REMOTE="${MUSIC_REMOTE:-sam:/Volumes/NASH_SYNC/music/library}"
-MUSIC_TIER="${MUSIC_TIER:-0}"
 
 RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}/music-mount-${UID}"
 SOCKET="$RUNTIME_DIR/mpv.sock"
@@ -33,9 +29,12 @@ RCLONE_LOG="$CACHE_DIR/rclone.log"
 MPV_LOG="$CACHE_DIR/mpv.log"
 RCLONE_PID="$CACHE_DIR/rclone.pid"
 MPV_PID="$CACHE_DIR/mpv.pid"
-TIER_MPV="$RUNTIME_DIR/tier"
-TIER_MOUNT="$CACHE_DIR/tier.mount"
 
+# Gapless playback over the rclone mount:
+#  - keep the audio device open across files
+#  - prefetch/open the next playlist entry before the current one ends
+#  - 0.5s audio buffer to bridge the network open
+#  - larger demux cache/readahead so the next file is ready early
 MPV_ARGS=(
     --idle=yes
     --no-video
@@ -45,59 +44,19 @@ MPV_ARGS=(
     --directory-mode=recursive
     --directory-filter-types=audio
     --gapless-audio=yes
+    --prefetch-playlist=yes
+    --audio-buffer=0.5
     --audio-display=no
     --no-resume-playback
     --save-position-on-quit=no
     --cache=yes
+    --demuxer-max-bytes=256MiB
+    --demuxer-readahead-secs=30
 )
 
 RCLONE_ARGS=(
     --read-only
     --dir-cache-time=10m
-)
-
-DEMUXER_MAX_BYTES="128MiB"
-DEMUXER_READAHEAD="20"
-MPV_TIER=0
-MOUNT_TIER=0
-
-# Optional gapless tuning presets, for A/B testing. Tiers are independent.
-#   1: mpv prefetch-playlist + 0.5s audio buffer + larger demux cache
-#   2: rclone 64M in-memory read buffer
-#   3: rclone disk cache (VFS full, 64M read-ahead, 10G cap)
-case "$MUSIC_TIER" in
-    0) ;;
-    1)
-        MPV_TIER=1
-        MPV_ARGS+=(
-            --prefetch-playlist=yes
-            --audio-buffer=0.5
-        )
-        DEMUXER_MAX_BYTES="256MiB"
-        DEMUXER_READAHEAD="30"
-        ;;
-    2)
-        MOUNT_TIER=2
-        RCLONE_ARGS+=(--buffer-size=64M)
-        ;;
-    3)
-        MOUNT_TIER=3
-        RCLONE_ARGS+=(
-            --vfs-cache-mode=full
-            --vfs-read-ahead=64M
-            --vfs-cache-max-size=10G
-            --vfs-cache-max-age=168h
-        )
-        ;;
-    *)
-        printf 'music: invalid MUSIC_TIER=%s (use 0, 1, 2, or 3)\n' "$MUSIC_TIER" >&2
-        exit 1
-        ;;
-esac
-
-MPV_ARGS+=(
-    --demuxer-max-bytes="$DEMUXER_MAX_BYTES"
-    --demuxer-readahead-secs="$DEMUXER_READAHEAD"
 )
 
 die() {
@@ -113,7 +72,7 @@ With no command, print this help. Use "music mount" to mount the library.
 
 Library
   mount                    Mount the music library (foreground; Ctrl-C unmounts)
-  unmount                  Stop playback, then unmount the library
+  unmount                  Quit mpv, then unmount the library
   status                   Show mount, mpv, and now-playing state
 
 Playback
@@ -132,13 +91,11 @@ Playback
   quit                     Stop and exit the mpv daemon
   controls                 Single-key control panel (q detaches, Q quits mpv)
   logs [-f]                Show rclone/mpv logs
-  restart                  Quit mpv and unmount (for changing MUSIC_TIER)
+  restart                  Quit mpv and unmount the library
 
 Environment / config
   MUSIC_DIR        Music mountpoint        (default: ~/Music)
   MUSIC_REMOTE     rclone remote:path     (default: sam:/Volumes/NASH_SYNC/music/library)
-  MUSIC_TIER       Gapless preset: 0=default, 1=mpv prefetch,
-                   2=rclone 64M buffer, 3=rclone disk cache
   Config file      ~/.config/music/config (sourced by the script)
   Runtime socket   ${XDG_RUNTIME_DIR}/music-mount-$UID/mpv.sock
 EOF
@@ -269,18 +226,16 @@ ensure_daemon() {
     command -v mpv >/dev/null 2>&1 || die "mpv not found"
     command -v python3 >/dev/null 2>&1 || die "python3 not found"
 
-    ensure_tier
     mpv_alive && return 0
 
     mkdir -p "$RUNTIME_DIR" "$CACHE_DIR"
-    rm -f "$SOCKET" "$TIER_MPV"
+    rm -f "$SOCKET"
 
     # Clean up a wedged instance that still owns our socket path.
     pkill -f -- "input-ipc-server=$SOCKET" >/dev/null 2>&1 || true
 
     nohup mpv "${MPV_ARGS[@]}" >"$MPV_LOG" 2>&1 &
     echo $! >"$MPV_PID"
-    printf '%s' "$MPV_TIER" >"$TIER_MPV"
 
     local i
     for i in {1..50}; do
@@ -303,48 +258,10 @@ do_mount() {
         return 0
     fi
     mkdir -p "$MUSIC_DIR" "$CACHE_DIR"
-    printf '%s' "$MOUNT_TIER" >"$TIER_MOUNT"
     exec rclone mount "$MUSIC_REMOTE" "$MUSIC_DIR" "${RCLONE_ARGS[@]}"
 }
 
-# Restart mpv/the mount when the requested MUSIC_TIER differs from the
-# running one, so A/B tests actually use the selected flags.
-ensure_tier() {
-    local running mpv_restart=0 mount_restart=0
-
-    if mpv_alive; then
-        running=$(cat "$TIER_MPV" 2>/dev/null || true)
-        if [ -n "$running" ] && [ "$running" != "$MPV_TIER" ]; then
-            mpv_restart=1
-        fi
-    fi
-
-    if is_mounted; then
-        running=$(cat "$TIER_MOUNT" 2>/dev/null || true)
-        if [ -n "$running" ] && [ "$running" != "$MOUNT_TIER" ]; then
-            mount_restart=1
-        fi
-    fi
-
-    # Replacing the mount requires dropping mpv first, even if its own
-    # flags did not change.
-    if (( mpv_restart || mount_restart )); then
-        cmd_quit >/dev/null 2>&1 || true
-    fi
-
-    if (( mount_restart )); then
-        if command -v fusermount3 >/dev/null 2>&1; then
-            fusermount3 -u "$MUSIC_DIR" 2>/dev/null \
-                || fusermount3 -uz "$MUSIC_DIR" 2>/dev/null \
-                || true
-        fi
-        rm -f "$RCLONE_PID" "$TIER_MOUNT"
-    fi
-}
-
 ensure_mount() {
-    ensure_tier
-
     # Fast path: never touch rclone if the library is already mounted.
     if is_mounted; then
         return 0
@@ -367,7 +284,6 @@ ensure_mount() {
             "${RCLONE_ARGS[@]}" >>"$RCLONE_LOG" 2>&1 &
         pid=$!
         echo "$pid" >"$RCLONE_PID"
-        printf '%s' "$MOUNT_TIER" >"$TIER_MOUNT"
     fi
 
     local i
@@ -389,14 +305,24 @@ ensure_mount() {
 }
 
 do_unmount() {
-    if [ -S "$SOCKET" ] && mpv_alive; then
-        ipc stop >/dev/null 2>&1 || true
-        sleep 0.3
+    # Quit mpv first: prefetched/demuxer file handles can keep the FUSE mount
+    # busy even after playback is stopped.
+    if mpv_alive; then
+        cmd_quit >/dev/null 2>&1 || true
     fi
 
     if is_mounted; then
         command -v fusermount3 >/dev/null 2>&1 || die "fusermount3 not found"
-        if ! fusermount3 -u "$MUSIC_DIR" 2>/dev/null; then
+        local i ok=0
+        for i in {1..10}; do
+            is_mounted || { ok=1; break; }
+            if fusermount3 -u "$MUSIC_DIR" 2>/dev/null; then
+                ok=1
+                break
+            fi
+            sleep 0.2
+        done
+        if (( ! ok )); then
             printf 'music: normal unmount failed, trying lazy unmount\n' >&2
             fusermount3 -uz "$MUSIC_DIR" || die "failed to unmount $MUSIC_DIR"
         fi
@@ -405,7 +331,7 @@ do_unmount() {
         printf 'not mounted: %s\n' "$MUSIC_DIR"
     fi
 
-    rm -f "$RCLONE_PID" "$TIER_MOUNT"
+    rm -f "$RCLONE_PID"
 }
 
 # ------------------------------------------------------------------ utilities
@@ -785,18 +711,54 @@ cmd_repeat_cycle() {
 }
 
 cmd_quit() {
+    local pid="" was_alive=0 i cmdline
+
+    if [ -f "$MPV_PID" ]; then
+        pid=$(cat "$MPV_PID" 2>/dev/null || true)
+        # Only trust the pidfile if that pid is actually our mpv (guards
+        # against a recycled PID).
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            cmdline=$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null || true)
+            if [[ "$cmdline" == *"input-ipc-server=$SOCKET"* ]]; then
+                was_alive=1
+            else
+                pid=""
+            fi
+        else
+            pid=""
+        fi
+    fi
+
     if mpv_alive; then
+        was_alive=1
         ipc quit >/dev/null 2>&1 || true
-        local i
-        for i in {1..30}; do
+    fi
+
+    if [ -n "$pid" ]; then
+        # Wait for the process to actually exit so the mount is not still busy
+        # when callers such as `music restart` unmount right after this.
+        for i in {1..50}; do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.1
+        done
+        if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid" 2>/dev/null || true
+            sleep 0.2
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+    else
+        for i in {1..50}; do
             mpv_alive || break
             sleep 0.1
         done
+    fi
+
+    if (( was_alive )); then
         printf 'mpv stopped\n'
     else
         printf 'mpv is not running\n'
     fi
-    rm -f "$SOCKET" "$MPV_PID" "$TIER_MPV"
+    rm -f "$SOCKET" "$MPV_PID"
 }
 
 cmd_restart() {

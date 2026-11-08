@@ -7,7 +7,7 @@ set -l __music_commands \
     volume seek shuffle repeat quit restart controls logs help
 
 complete -c music -n '__fish_use_subcommand' -a mount -d 'Mount the music library'
-complete -c music -n '__fish_use_subcommand' -a unmount -d 'Stop playback and unmount'
+complete -c music -n '__fish_use_subcommand' -a unmount -d 'Quit mpv and unmount'
 complete -c music -n '__fish_use_subcommand' -a status -d 'Show mount and playback state'
 complete -c music -n '__fish_use_subcommand' -a play -d 'Replace the queue with a path'
 complete -c music -n '__fish_use_subcommand' -a add -d 'Append paths to the queue'
