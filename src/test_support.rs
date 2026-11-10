@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::config::Config;
 
@@ -67,7 +67,14 @@ pub fn cases(default: usize) -> usize {
 }
 
 pub fn unique_base(label: &str) -> PathBuf {
-    let base = env::temp_dir().join(format!(
+    // macOS TMPDIR points under /var/folders/..., which is long enough that
+    // narrow TUI tests truncate the path before it can be asserted on.
+    let root = if Path::new("/tmp").is_dir() {
+        PathBuf::from("/tmp")
+    } else {
+        env::temp_dir()
+    };
+    let base = root.join(format!(
         "music-{label}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()

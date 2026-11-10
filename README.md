@@ -19,13 +19,28 @@ keys and MPRIS panels work too.
 
 - `mpv`, `rclone`
 - `fzf` for `music browse`
-- `parec` (pulseaudio-utils) for the spectrum visualizer
-- `fusermount3` (util-linux) for `music unmount`
-- `tail` (coreutils) for `music logs -f`
-- optional: `mpv-mpris` for hardware media keys
+- `tail` for `music logs -f`
+- optional: `mpv-mpris` for hardware media keys (Linux)
 
-Linux only: the player uses `mountpoint`, `fusermount3`, `setsid`, and
-`XDG_RUNTIME_DIR`.
+Linux:
+
+- `parec` (pulseaudio-utils) for the spectrum visualizer
+- `mountpoint` and `fusermount3` (util-linux) for mount detection/unmount
+- `setsid` and `XDG_RUNTIME_DIR` for the detached player
+
+macOS:
+
+- FUSE-T (`brew install --cask fuse-t`) or an enabled macFUSE install for
+  `rclone mount`
+- the official rclone build from rclone.org: Homebrew's rclone is compiled
+  without FUSE support and refuses `rclone mount` on macOS
+- if macFUSE is installed but not enabled, rclone prefers its
+  `/usr/local/lib/libfuse.2.dylib` over FUSE-T; remove or rename that library
+  (or uninstall macFUSE) so rclone falls back to `libfuse-t.dylib`
+- the spectrum visualizer is unavailable because macOS has no PulseAudio
+  monitor source; everything else works the same
+
+The platform-specific process and mount helpers live in `src/platform.rs`.
 
 ## Build and install
 
@@ -33,7 +48,7 @@ Linux only: the player uses `mountpoint`, `fusermount3`, `setsid`, and
 cargo build --release
 ./target/release/music --help
 
-# Install `music` into ~/.cargo/bin
+# Install `music` (into ~/.cargo/bin, or ~/.local/bin when that is not on PATH)
 ./scripts/install.sh
 
 # Format, lint, and test
@@ -47,6 +62,11 @@ cargo build --release
 parsing, path resolution, playlist building over random directory trees, mpv
 IPC replies and status parsing, and ratatui rendering at random terminal sizes.
 Use `FUZZ_CASES=50000 ./scripts/fuzz.sh` for a longer run.
+
+On macOS, `brew install mpv fzf`, install FUSE-T, and put the official rclone
+binary ahead of Homebrew's on `PATH` (for example in `~/.local/bin`). The
+Homebrew rclone build has no `mount` support, so `music mount`/`play` would
+otherwise fail.
 
 ## Usage
 
@@ -164,6 +184,8 @@ The spectrum pane captures the default output monitor with `parec` and renders
 log-spaced FFT bars at ~30 FPS. It shows **system output**, not just mpv — bars
 keep moving if another app is playing. `v` toggles it; toggling off/on reconnects
 to the current default sink. It is hidden automatically below 20 terminal rows.
+On macOS the pane reports `visualizer unavailable`, since there is no PulseAudio
+monitor source.
 
 The UI polls mpv over one persistent socket, reconnects if the daemon restarts,
 and restores the terminal on exit.
@@ -214,7 +236,7 @@ would be a local rclone VFS cache rather than larger demux buffers.
   - socket: `${XDG_RUNTIME_DIR:-/tmp}/music-mount-$UID/mpv.sock`
   - logs and pid files: `~/.cache/music/`
 
-## Desktop integration
+## Desktop integration (Linux/niri)
 
 Example [niri](https://github.com/YaLTeR/niri) binding that focuses an existing
 controls window or opens one as a normal tiled window:

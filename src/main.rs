@@ -4,6 +4,7 @@ mod cover;
 mod logs;
 mod mount;
 mod mpv;
+mod platform;
 mod player;
 mod queue;
 mod tui;

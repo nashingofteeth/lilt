@@ -6,6 +6,11 @@
 and the ratatui control panel (`music controls`) are two front ends for the same
 queue and playback state.
 
+Linux and macOS are supported. Keep OS-specific process and mount commands in
+`src/platform.rs` instead of spreading `cfg` blocks through the rest of the
+code. On macOS, `rclone mount` needs FUSE-T (or macFUSE) and the official rclone
+build; Homebrew's rclone is compiled without mount support.
+
 ## Build and test
 
 ```sh

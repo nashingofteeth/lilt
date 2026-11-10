@@ -9,6 +9,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::config::Config;
+use crate::platform;
 
 pub struct Mpv {
     writer: UnixStream,
@@ -426,17 +427,14 @@ fn read_pid(path: &Path) -> Option<u32> {
 }
 
 fn pid_alive(pid: u32) -> bool {
-    Path::new("/proc").join(pid.to_string()).exists()
+    platform::pid_alive(pid)
 }
 
 /// Guard against a recycled PID: only signal it if its command line is our mpv.
 fn pid_is_ours(pid: u32, socket: &Path) -> bool {
-    let cmdline = format!("/proc/{pid}/cmdline");
-    let Ok(bytes) = std::fs::read(cmdline) else {
-        return false;
-    };
-    let text = String::from_utf8_lossy(&bytes).replace('\0', " ");
-    text.contains(&format!("input-ipc-server={}", socket.display()))
+    platform::process_command(pid)
+        .map(|text| text.contains(&format!("input-ipc-server={}", socket.display())))
+        .unwrap_or(false)
 }
 
 fn wait_for_exit(pid: u32, timeout: Duration) {

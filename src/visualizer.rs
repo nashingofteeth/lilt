@@ -1,14 +1,24 @@
+#[cfg(target_os = "linux")]
 use std::io::Read;
-use std::process::{Child, Command, Stdio};
+use std::process::Child;
+#[cfg(target_os = "linux")]
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
+#[cfg(target_os = "linux")]
+use std::thread;
+use std::thread::JoinHandle;
 
+#[cfg(any(target_os = "linux", test))]
 const SAMPLE_RATE: usize = 48_000;
+#[cfg(target_os = "linux")]
 const CHANNELS: usize = 2;
+#[cfg(any(target_os = "linux", test))]
 const FFT_SIZE: usize = 2_048;
 const BAND_COUNT: usize = 64;
+#[cfg(any(target_os = "linux", test))]
 const MIN_FREQ: f32 = 30.0;
+#[cfg(any(target_os = "linux", test))]
 const MAX_FREQ: f32 = 16_000.0;
 
 /// Captures the system output monitor with parec and publishes log-spaced
@@ -21,6 +31,19 @@ pub struct Visualizer {
 }
 
 impl Visualizer {
+    /// macOS has no PulseAudio monitor source out of the box, so the pane
+    /// reports itself unavailable instead of spawning a backend.
+    #[cfg(not(target_os = "linux"))]
+    pub fn start() -> Self {
+        Self {
+            bands: Arc::new(Mutex::new(vec![0.0; BAND_COUNT])),
+            available: Arc::new(AtomicBool::new(false)),
+            child: None,
+            reader: None,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
     pub fn start() -> Self {
         let bands = Arc::new(Mutex::new(vec![0.0; BAND_COUNT]));
         let available = Arc::new(AtomicBool::new(false));
@@ -100,6 +123,7 @@ impl Drop for Visualizer {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn read_loop(
     mut stdout: std::process::ChildStdout,
     bands: Arc<Mutex<Vec<f32>>>,
@@ -145,6 +169,7 @@ fn read_loop(
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn hann_window(size: usize) -> Vec<f32> {
     (0..size)
         .map(|index| {
@@ -155,6 +180,7 @@ fn hann_window(size: usize) -> Vec<f32> {
 }
 
 /// Pure spectrum analysis, kept separate so it can be tested without audio.
+#[cfg(any(target_os = "linux", test))]
 fn analyze(samples: &[f32], window: &[f32], smoothed: &mut [f32]) -> Vec<f32> {
     let mut buffer: Vec<Complex> = samples
         .iter()
@@ -191,21 +217,25 @@ fn analyze(samples: &[f32], window: &[f32], smoothed: &mut [f32]) -> Vec<f32> {
     smoothed.to_vec()
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn band_edge(band: usize) -> f32 {
     let ratio = band as f32 / BAND_COUNT as f32;
     MIN_FREQ * (MAX_FREQ / MIN_FREQ).powf(ratio)
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn frequency_to_bin(frequency: f32) -> usize {
     ((frequency * FFT_SIZE as f32 / SAMPLE_RATE as f32).round() as usize).max(1)
 }
 
 #[derive(Clone, Copy, Default)]
+#[cfg(any(target_os = "linux", test))]
 struct Complex {
     re: f32,
     im: f32,
 }
 
+#[cfg(any(target_os = "linux", test))]
 impl Complex {
     fn mul(self, other: Self) -> Self {
         Self {
@@ -215,6 +245,7 @@ impl Complex {
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn fft(buffer: &mut [Complex]) {
     let size = buffer.len();
     if size <= 1 {

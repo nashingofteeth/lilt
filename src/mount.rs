@@ -6,26 +6,24 @@ use std::time::{Duration, Instant};
 
 use crate::config::Config;
 use crate::mpv;
+use crate::platform;
 
 pub fn is_mounted(dir: &Path) -> bool {
-    Command::new("mountpoint")
-        .arg("-q")
-        .arg(dir)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+    platform::is_mounted(dir)
 }
 
 fn rclone_args(config: &Config) -> Vec<std::ffi::OsString> {
-    vec![
+    let mut args: Vec<std::ffi::OsString> = vec![
         "mount".into(),
         config.remote.clone().into(),
         config.music_dir.clone().into_os_string(),
         "--read-only".into(),
         "--dir-cache-time=10m".into(),
-    ]
+    ];
+    // Avoid AppleDouble sidecar traffic; the library is read-only anyway.
+    #[cfg(target_os = "macos")]
+    args.push("--noappledouble".into());
+    args
 }
 
 pub fn mount_foreground(config: &Config) -> Result<()> {
@@ -115,39 +113,20 @@ pub fn unmount(config: &Config) -> Result<()> {
     }
 
     if is_mounted(&config.music_dir) {
-        let mut ok = false;
-        for _ in 0..10 {
-            if !is_mounted(&config.music_dir) {
-                ok = true;
-                break;
-            }
-            let status = Command::new("fusermount3")
-                .arg("-u")
-                .arg(&config.music_dir)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-            if status.map(|s| s.success()).unwrap_or(false) {
-                ok = true;
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(200));
-        }
-
-        if !ok {
-            println!("music: normal unmount failed, trying lazy unmount");
-            let status = Command::new("fusermount3")
-                .arg("-uz")
-                .arg(&config.music_dir)
-                .status()
-                .context("running fusermount3 -uz")?;
-            if !status.success() {
-                bail!("failed to unmount {}", config.music_dir.display());
-            }
-        }
+        platform::unmount(&config.music_dir)?;
         println!("unmounted {}", config.music_dir.display());
     } else {
         println!("not mounted: {}", config.music_dir.display());
+    }
+
+    // Some FUSE backends return before rclone notices. Stop our own process.
+    if let Some(pid) = read_pid(&config.rclone_pid)
+        && platform::pid_alive(pid)
+        && pid_is_our_rclone(pid, config)
+    {
+        unsafe {
+            libc::kill(pid as libc::pid_t, libc::SIGTERM);
+        }
     }
 
     let _ = std::fs::remove_file(&config.rclone_pid);
@@ -161,15 +140,15 @@ fn read_pid(path: &Path) -> Option<u32> {
 }
 
 fn pid_alive(pid: u32) -> bool {
-    Path::new("/proc").join(pid.to_string()).exists()
+    platform::pid_alive(pid)
 }
 
 fn pid_is_our_rclone(pid: u32, config: &Config) -> bool {
-    let Ok(bytes) = std::fs::read(format!("/proc/{pid}/cmdline")) else {
-        return false;
-    };
-    let text = String::from_utf8_lossy(&bytes).replace('\0', " ");
-    text.contains("rclone")
-        && text.contains("mount")
-        && text.contains(&config.music_dir.display().to_string())
+    platform::process_command(pid)
+        .map(|text| {
+            text.contains("rclone")
+                && text.contains("mount")
+                && text.contains(&config.music_dir.display().to_string())
+        })
+        .unwrap_or(false)
 }

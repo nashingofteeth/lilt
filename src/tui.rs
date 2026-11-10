@@ -1346,7 +1346,7 @@ fn render_spectrum(frame: &mut Frame, area: Rect, bands: &[f32], available: bool
     }
     if !available || bands.is_empty() {
         frame.render_widget(
-            Paragraph::new("visualizer unavailable (parec)")
+            Paragraph::new("visualizer unavailable")
                 .alignment(Alignment::Center)
                 .style(Style::default().fg(Color::DarkGray)),
             area,
