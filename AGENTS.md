@@ -9,7 +9,9 @@ queue and playback state.
 Linux and macOS are supported. Keep OS-specific process and mount commands in
 `src/platform.rs` instead of spreading `cfg` blocks through the rest of the
 code. On macOS, `rclone mount` needs FUSE-T (or macFUSE) and the official rclone
-build; Homebrew's rclone is compiled without mount support.
+build; Homebrew's rclone is compiled without mount support. The spectrum pane
+uses `parec` on Linux and `ffmpeg` + BlackHole 2ch on macOS; keep the device
+detection and capture command in `src/visualizer.rs`.
 
 ## Build and test
 

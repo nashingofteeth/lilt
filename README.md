@@ -37,8 +37,9 @@ macOS:
 - if macFUSE is installed but not enabled, rclone prefers its
   `/usr/local/lib/libfuse.2.dylib` over FUSE-T; remove or rename that library
   (or uninstall macFUSE) so rclone falls back to `libfuse-t.dylib`
-- the spectrum visualizer is unavailable because macOS has no PulseAudio
-  monitor source; everything else works the same
+- the spectrum visualizer needs `ffmpeg` and BlackHole 2ch
+  (`brew install --cask blackhole-2ch`), plus a Multi-Output device that
+  includes BlackHole and the output you listen on
 
 The platform-specific process and mount helpers live in `src/platform.rs`.
 
@@ -184,8 +185,24 @@ The spectrum pane captures the default output monitor with `parec` and renders
 log-spaced FFT bars at ~30 FPS. It shows **system output**, not just mpv — bars
 keep moving if another app is playing. `v` toggles it; toggling off/on reconnects
 to the current default sink. It is hidden automatically below 20 terminal rows.
-On macOS the pane reports `visualizer unavailable`, since there is no PulseAudio
-monitor source.
+
+On macOS it captures **BlackHole 2ch** with `ffmpeg` instead. Create a
+Multi-Output device in Audio MIDI Setup containing BlackHole and the output you
+actually listen on, then pick one:
+
+- make that Multi-Output the system output, so the bars follow all system audio;
+- or keep the system output unchanged and send only mpv to it, so the bars
+  follow `music`:
+
+  ```toml
+  mpv_extra_args = ["--audio-device=coreaudio/<device-id>"]
+  ```
+
+Use the id from `mpv --audio-device=help` (the quoted value, not the friendly
+name; Multi-Output devices look like `coreaudio/~:AMS2_StackedOutput:0`). The
+first capture prompts for Microphone permission; grant it to the terminal.
+`capture_device = "BlackHole 2ch"` (or an AVFoundation audio index) overrides
+device auto-detection, and `MUSIC_CAPTURE_DEVICE` overrides the config file.
 
 The UI polls mpv over one persistent socket, reconnects if the daemon restarts,
 and restores the terminal on exit.

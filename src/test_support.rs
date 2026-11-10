@@ -95,8 +95,10 @@ pub fn test_config(music_dir: PathBuf, base: &std::path::Path) -> Config {
         cache_dir: base.join("cache"),
         rclone_log: base.join("cache/rclone.log"),
         mpv_log: base.join("cache/mpv.log"),
+        capture_log: base.join("cache/capture.log"),
         rclone_pid: base.join("cache/rclone.pid"),
         mpv_pid: base.join("cache/mpv.pid"),
         mpv_extra_args: Vec::new(),
+        capture_device: None,
     }
 }

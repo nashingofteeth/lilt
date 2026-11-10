@@ -742,14 +742,14 @@ impl App {
 
     fn start_visualizer(&mut self) {
         if self.visualizer_enabled && self.visualizer.is_none() {
-            self.visualizer = Some(Visualizer::start());
+            self.visualizer = Some(Visualizer::start(&self.config));
         }
     }
 
     fn toggle_visualizer(&mut self) {
         self.visualizer_enabled = !self.visualizer_enabled;
         if self.visualizer_enabled {
-            self.visualizer = Some(Visualizer::start());
+            self.visualizer = Some(Visualizer::start(&self.config));
         } else {
             self.visualizer = None;
         }
@@ -1345,8 +1345,13 @@ fn render_spectrum(frame: &mut Frame, area: Rect, bands: &[f32], available: bool
         return;
     }
     if !available || bands.is_empty() {
+        let message = if cfg!(target_os = "macos") {
+            "visualizer unavailable (BlackHole)"
+        } else {
+            "visualizer unavailable"
+        };
         frame.render_widget(
-            Paragraph::new("visualizer unavailable")
+            Paragraph::new(message)
                 .alignment(Alignment::Center)
                 .style(Style::default().fg(Color::DarkGray)),
             area,

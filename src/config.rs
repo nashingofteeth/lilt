@@ -14,15 +14,18 @@ pub struct Config {
     pub cache_dir: PathBuf,
     pub rclone_log: PathBuf,
     pub mpv_log: PathBuf,
+    pub capture_log: PathBuf,
     pub rclone_pid: PathBuf,
     pub mpv_pid: PathBuf,
     pub mpv_extra_args: Vec<String>,
+    pub capture_device: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 struct FileConfig {
     music_dir: Option<String>,
     remote: Option<String>,
+    capture_device: Option<String>,
     #[serde(default)]
     mpv_extra_args: Vec<String>,
 }
@@ -57,6 +60,10 @@ impl Config {
             .or(file.remote)
             .context("music remote not configured; set `remote` in ~/.config/music/config.toml")?;
 
+        let capture_device = env::var("MUSIC_CAPTURE_DEVICE")
+            .ok()
+            .or(file.capture_device);
+
         let runtime_base = env::var_os("XDG_RUNTIME_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/tmp"));
@@ -74,11 +81,13 @@ impl Config {
             socket: runtime_dir.join("mpv.sock"),
             rclone_log: cache_dir.join("rclone.log"),
             mpv_log: cache_dir.join("mpv.log"),
+            capture_log: cache_dir.join("capture.log"),
             rclone_pid: cache_dir.join("rclone.pid"),
             mpv_pid: cache_dir.join("mpv.pid"),
             runtime_dir,
             cache_dir,
             mpv_extra_args: file.mpv_extra_args,
+            capture_device,
         })
     }
 

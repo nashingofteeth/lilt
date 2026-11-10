@@ -1,28 +1,20 @@
-#[cfg(target_os = "linux")]
 use std::io::Read;
-use std::process::Child;
-#[cfg(target_os = "linux")]
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-#[cfg(target_os = "linux")]
-use std::thread;
-use std::thread::JoinHandle;
+use std::thread::{self, JoinHandle};
 
-#[cfg(any(target_os = "linux", test))]
+use crate::config::Config;
+
 const SAMPLE_RATE: usize = 48_000;
-#[cfg(target_os = "linux")]
 const CHANNELS: usize = 2;
-#[cfg(any(target_os = "linux", test))]
 const FFT_SIZE: usize = 2_048;
 const BAND_COUNT: usize = 64;
-#[cfg(any(target_os = "linux", test))]
 const MIN_FREQ: f32 = 30.0;
-#[cfg(any(target_os = "linux", test))]
 const MAX_FREQ: f32 = 16_000.0;
 
-/// Captures the system output monitor with parec and publishes log-spaced
-/// spectrum bars. All work happens off the UI thread.
+/// Captures the output monitor (PulseAudio on Linux, BlackHole on macOS) and
+/// publishes log-spaced spectrum bars. All work happens off the UI thread.
 pub struct Visualizer {
     bands: Arc<Mutex<Vec<f32>>>,
     available: Arc<AtomicBool>,
@@ -31,37 +23,24 @@ pub struct Visualizer {
 }
 
 impl Visualizer {
-    /// macOS has no PulseAudio monitor source out of the box, so the pane
-    /// reports itself unavailable instead of spawning a backend.
-    #[cfg(not(target_os = "linux"))]
-    pub fn start() -> Self {
-        Self {
-            bands: Arc::new(Mutex::new(vec![0.0; BAND_COUNT])),
-            available: Arc::new(AtomicBool::new(false)),
-            child: None,
-            reader: None,
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    pub fn start() -> Self {
+    pub fn start(config: &Config) -> Self {
         let bands = Arc::new(Mutex::new(vec![0.0; BAND_COUNT]));
         let available = Arc::new(AtomicBool::new(false));
 
-        let child = Command::new("parec")
-            .args([
-                "--device=@DEFAULT_MONITOR@",
-                "--format=float32le",
-                "--rate=48000",
-                "--channels=2",
-                "--latency-msec=20",
-                "--raw",
-            ])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn();
+        let Some(mut command) = capture_command(config) else {
+            return Self {
+                bands,
+                available,
+                child: None,
+                reader: None,
+            };
+        };
 
-        let mut child = match child {
+        let mut child = match command
+            .stdout(Stdio::piped())
+            .stderr(capture_stderr(config))
+            .spawn()
+        {
             Ok(child) => child,
             Err(_) => {
                 return Self {
@@ -111,6 +90,101 @@ impl Visualizer {
     }
 }
 
+fn capture_stderr(config: &Config) -> Stdio {
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&config.capture_log)
+    {
+        Ok(file) => Stdio::from(file),
+        Err(_) => Stdio::null(),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn capture_command(_config: &Config) -> Option<Command> {
+    let mut command = Command::new("parec");
+    command.args([
+        "--device=@DEFAULT_MONITOR@",
+        "--format=float32le",
+        "--rate=48000",
+        "--channels=2",
+        "--latency-msec=20",
+        "--raw",
+    ]);
+    Some(command)
+}
+
+#[cfg(target_os = "macos")]
+fn capture_command(config: &Config) -> Option<Command> {
+    let index = audio_device_index(&ffmpeg_device_list()?, config.capture_device.as_deref())?;
+    let mut command = Command::new("ffmpeg");
+    command.args([
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-nostdin",
+        "-f",
+        "avfoundation",
+    ]);
+    command.arg("-i").arg(format!(":{index}"));
+    command.args(["-ac", "2", "-ar", "48000", "-f", "f32le", "-"]);
+    command.stdin(Stdio::null());
+    Some(command)
+}
+
+#[cfg(target_os = "macos")]
+fn ffmpeg_device_list() -> Option<String> {
+    let output = Command::new("ffmpeg")
+        .args([
+            "-hide_banner",
+            "-f",
+            "avfoundation",
+            "-list_devices",
+            "true",
+            "-i",
+            "",
+        ])
+        .output()
+        .ok()?;
+    Some(String::from_utf8_lossy(&output.stderr).into_owned())
+}
+
+/// Find the AVFoundation audio index for the requested device. `None` picks
+/// the first BlackHole device; a query may be a device name or an index.
+#[cfg(any(target_os = "macos", test))]
+fn audio_device_index(listing: &str, query: Option<&str>) -> Option<usize> {
+    let audio = listing.split("AVFoundation audio devices:").nth(1)?;
+    for line in audio.lines() {
+        let Some((index, name)) = parse_device_line(line) else {
+            continue;
+        };
+        match query {
+            Some(query) => {
+                if query.parse::<usize>().ok() == Some(index) || name.eq_ignore_ascii_case(query) {
+                    return Some(index);
+                }
+            }
+            None => {
+                if name.to_ascii_lowercase().contains("blackhole") {
+                    return Some(index);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn parse_device_line(line: &str) -> Option<(usize, &str)> {
+    // "[AVFoundation indev @ 0x...] [1] BlackHole 2ch"
+    let open = line.rfind('[')?;
+    let close = line[open..].find(']')? + open;
+    let index = line[open + 1..close].trim().parse().ok()?;
+    let name = line[close + 1..].trim();
+    (!name.is_empty()).then_some((index, name))
+}
+
 impl Drop for Visualizer {
     fn drop(&mut self) {
         if let Some(mut child) = self.child.take() {
@@ -123,7 +197,6 @@ impl Drop for Visualizer {
     }
 }
 
-#[cfg(target_os = "linux")]
 fn read_loop(
     mut stdout: std::process::ChildStdout,
     bands: Arc<Mutex<Vec<f32>>>,
@@ -169,7 +242,6 @@ fn read_loop(
     }
 }
 
-#[cfg(any(target_os = "linux", test))]
 fn hann_window(size: usize) -> Vec<f32> {
     (0..size)
         .map(|index| {
@@ -180,7 +252,6 @@ fn hann_window(size: usize) -> Vec<f32> {
 }
 
 /// Pure spectrum analysis, kept separate so it can be tested without audio.
-#[cfg(any(target_os = "linux", test))]
 fn analyze(samples: &[f32], window: &[f32], smoothed: &mut [f32]) -> Vec<f32> {
     let mut buffer: Vec<Complex> = samples
         .iter()
@@ -217,25 +288,21 @@ fn analyze(samples: &[f32], window: &[f32], smoothed: &mut [f32]) -> Vec<f32> {
     smoothed.to_vec()
 }
 
-#[cfg(any(target_os = "linux", test))]
 fn band_edge(band: usize) -> f32 {
     let ratio = band as f32 / BAND_COUNT as f32;
     MIN_FREQ * (MAX_FREQ / MIN_FREQ).powf(ratio)
 }
 
-#[cfg(any(target_os = "linux", test))]
 fn frequency_to_bin(frequency: f32) -> usize {
     ((frequency * FFT_SIZE as f32 / SAMPLE_RATE as f32).round() as usize).max(1)
 }
 
 #[derive(Clone, Copy, Default)]
-#[cfg(any(target_os = "linux", test))]
 struct Complex {
     re: f32,
     im: f32,
 }
 
-#[cfg(any(target_os = "linux", test))]
 impl Complex {
     fn mul(self, other: Self) -> Self {
         Self {
@@ -245,7 +312,6 @@ impl Complex {
     }
 }
 
-#[cfg(any(target_os = "linux", test))]
 fn fft(buffer: &mut [Complex]) {
     let size = buffer.len();
     if size <= 1 {
@@ -348,5 +414,58 @@ mod tests {
             assert!(bands.iter().all(|value| value.is_finite()));
             assert!(bands.iter().all(|value| (0.0..=1.0).contains(value)));
         }
+    }
+
+    const DEVICE_LIST: &str = "\
+[AVFoundation indev @ 0x1] AVFoundation video devices:
+[AVFoundation indev @ 0x1] [0] FaceTime HD Camera
+[AVFoundation indev @ 0x1] [1] BlackHole Video
+[AVFoundation indev @ 0x1] AVFoundation audio devices:
+[AVFoundation indev @ 0x1] [0] iPhone Microphone
+[AVFoundation indev @ 0x1] [1] BlackHole 2ch
+[AVFoundation indev @ 0x1] [2] MacBook Pro Microphone
+[in#0 @ 0x2] Error opening input: Input/output error
+";
+
+    #[test]
+    fn finds_blackhole_in_audio_devices() {
+        assert_eq!(audio_device_index(DEVICE_LIST, None), Some(1));
+    }
+
+    #[test]
+    fn matches_configured_device_name_case_insensitively() {
+        assert_eq!(
+            audio_device_index(DEVICE_LIST, Some("macbook pro microphone")),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn configured_device_can_be_an_index() {
+        assert_eq!(audio_device_index(DEVICE_LIST, Some("0")), Some(0));
+    }
+
+    #[test]
+    fn unknown_device_is_not_found() {
+        assert_eq!(audio_device_index(DEVICE_LIST, Some("USB Interface")), None);
+    }
+
+    #[test]
+    fn video_section_is_ignored() {
+        let listing = "\
+[AVFoundation indev @ 0x1] AVFoundation video devices:
+[AVFoundation indev @ 0x1] [0] BlackHole Camera
+[AVFoundation indev @ 0x1] AVFoundation audio devices:
+[AVFoundation indev @ 0x1] [0] MacBook Pro Microphone
+";
+        assert_eq!(audio_device_index(listing, None), None);
+    }
+
+    #[test]
+    fn missing_audio_section_is_not_found() {
+        assert_eq!(
+            audio_device_index("AVFoundation video devices:", None),
+            None
+        );
     }
 }
