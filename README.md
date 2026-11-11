@@ -192,10 +192,10 @@ guessed title.
 The spectrum pane captures the **mpv stream only** on Linux: it matches the mpv
 daemon PID in `pactl list sink-inputs`, then runs
 `parec --monitor-stream=<index>`. The daemon runs with
-`--audio-client-name=music` so its stream can be found even when PipeWire omits
-the process ID; restart mpv after upgrading from an older build. Bars stop when
-the music stops and other apps do not affect them. `v` toggles it, and it is
-hidden below 20 terminal rows.
+`--audio-client-name=music`, and its PID is also resolved through PipeWire’s
+client entry when the stream properties omit it. Bars stop when the music stops
+and other apps do not affect them. `v` toggles it, and it is hidden below 20
+terminal rows.
 Set `capture_device` to explicitly record another PulseAudio source instead;
 recording a monitor source will make it system-wide again.
 

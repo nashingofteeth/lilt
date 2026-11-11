@@ -126,31 +126,46 @@ fn capture_command(config: &Config) -> Option<Command> {
 #[cfg(target_os = "linux")]
 fn mpv_sink_input(config: &Config) -> Option<u32> {
     let pid = crate::mpv::daemon_pid(config);
+    let sink_inputs = pactl_list("sink-inputs")?;
+    let clients = if pid.is_some() {
+        pactl_list("clients").unwrap_or_default()
+    } else {
+        String::new()
+    };
+    parse_sink_input_index(&sink_inputs, &clients, pid, crate::mpv::AUDIO_CLIENT_NAME)
+}
+
+#[cfg(target_os = "linux")]
+fn pactl_list(kind: &str) -> Option<String> {
     let output = Command::new("pactl")
-        .args(["list", "sink-inputs"])
+        .args(["list", kind])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output()
         .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    parse_sink_input_index(
-        &String::from_utf8_lossy(&output.stdout),
-        pid,
-        crate::mpv::AUDIO_CLIENT_NAME,
-    )
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// Find the mpv PulseAudio sink-input in `pactl list sink-inputs` output.
-/// Prefer the daemon PID; fall back to mpv's unique audio client name because
-/// PipeWire does not always expose `application.process.id`.
+///
+/// Prefer the daemon PID from the sink input or its client entry; PipeWire
+/// sometimes exposes the PID only at the client level and not on the stream.
+/// Fall back to mpv's unique audio client name for servers that hide it.
 #[cfg(any(target_os = "linux", test))]
-fn parse_sink_input_index(listing: &str, pid: Option<u32>, client_name: &str) -> Option<u32> {
+fn parse_sink_input_index(
+    sink_inputs: &str,
+    clients: &str,
+    pid: Option<u32>,
+    client_name: &str,
+) -> Option<u32> {
     let wanted_pid = pid.map(|pid| pid.to_string());
+    let client_pids = parse_client_pids(clients);
     let mut name_match = None;
 
-    for block in listing.split("Sink Input #").skip(1) {
+    for block in sink_inputs.split("Sink Input #").skip(1) {
         let mut lines = block.lines();
         let Some(index) = lines
             .next()
@@ -160,15 +175,21 @@ fn parse_sink_input_index(listing: &str, pid: Option<u32>, client_name: &str) ->
             continue;
         };
 
+        let mut client = None;
         let mut matches_pid = false;
         let mut matches_name = false;
         for line in lines {
-            let Some((key, value)) = line.trim().split_once('=') else {
+            let line = line.trim();
+            if let Some(value) = line.strip_prefix("Client:") {
+                client = value.trim().parse().ok();
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else {
                 continue;
             };
             let value = value.trim().trim_matches('"');
             match key.trim() {
-                "application.process.id" => {
+                "application.process.id" | "pipewire.sec.pid" => {
                     matches_pid = wanted_pid.as_deref() == Some(value);
                 }
                 "application.name" | "application.id" | "node.name" => {
@@ -178,7 +199,10 @@ fn parse_sink_input_index(listing: &str, pid: Option<u32>, client_name: &str) ->
             }
         }
 
-        if matches_pid {
+        let client_matches = client
+            .zip(pid)
+            .is_some_and(|(client, pid)| client_pids.contains(&(client, pid)));
+        if matches_pid || client_matches {
             return Some(index);
         }
         if matches_name && name_match.is_none() {
@@ -187,6 +211,34 @@ fn parse_sink_input_index(listing: &str, pid: Option<u32>, client_name: &str) ->
     }
 
     name_match
+}
+
+/// Map PulseAudio client indexes to process IDs from `pactl list clients`.
+#[cfg(any(target_os = "linux", test))]
+fn parse_client_pids(listing: &str) -> Vec<(u32, u32)> {
+    let mut result = Vec::new();
+    for block in listing.split("Client #").skip(1) {
+        let mut lines = block.lines();
+        let Some(client) = lines
+            .next()
+            .and_then(|line| line.split_whitespace().next())
+            .and_then(|value| value.parse().ok())
+        else {
+            continue;
+        };
+        for line in lines {
+            let Some((key, value)) = line.trim().split_once('=') else {
+                continue;
+            };
+            if matches!(key.trim(), "application.process.id" | "pipewire.sec.pid")
+                && let Ok(pid) = value.trim().trim_matches('"').parse()
+            {
+                result.push((client, pid));
+                break;
+            }
+        }
+    }
+    result
 }
 
 #[cfg(target_os = "macos")]
@@ -551,20 +603,26 @@ Sink Input #42
     #[test]
     fn finds_sink_input_for_process() {
         assert_eq!(
-            parse_sink_input_index(SINK_INPUTS, Some(1234), "music"),
+            parse_sink_input_index(SINK_INPUTS, "", Some(1234), "music"),
             Some(41)
         );
         assert_eq!(
-            parse_sink_input_index(SINK_INPUTS, Some(999), "music"),
+            parse_sink_input_index(SINK_INPUTS, "", Some(999), "music"),
             Some(42)
         );
-        assert_eq!(parse_sink_input_index(SINK_INPUTS, Some(1), "music"), None);
+        assert_eq!(
+            parse_sink_input_index(SINK_INPUTS, "", Some(1), "music"),
+            None
+        );
     }
 
     #[test]
     fn accepts_unquoted_sink_input_pid() {
         let listing = "Sink Input #7\napplication.process.id = 55\n";
-        assert_eq!(parse_sink_input_index(listing, Some(55), "music"), Some(7));
+        assert_eq!(
+            parse_sink_input_index(listing, "", Some(55), "music"),
+            Some(7)
+        );
     }
 
     #[test]
@@ -575,12 +633,12 @@ Sink Input #9
 \t\tapplication.name = \"music\"
 \t\tapplication.id = \"music\"
 ";
-        assert_eq!(parse_sink_input_index(listing, None, "music"), Some(9));
+        assert_eq!(parse_sink_input_index(listing, "", None, "music"), Some(9));
         assert_eq!(
-            parse_sink_input_index(listing, Some(1234), "music"),
+            parse_sink_input_index(listing, "", Some(1234), "music"),
             Some(9)
         );
-        assert_eq!(parse_sink_input_index(listing, None, "mpv"), None);
+        assert_eq!(parse_sink_input_index(listing, "", None, "mpv"), None);
     }
 
     #[test]
@@ -595,8 +653,45 @@ Sink Input #9
 \t\tapplication.process.id = \"1234\"
 ";
         assert_eq!(
-            parse_sink_input_index(listing, Some(1234), "music"),
+            parse_sink_input_index(listing, "", Some(1234), "music"),
             Some(9)
+        );
+    }
+
+    const CLIENTS: &str = "\
+Client #313
+\tProperties:
+\t\tapplication.process.id = \"1234\"
+Client #409
+\tProperties:
+\t\tpipewire.sec.pid = \"5678\"
+";
+
+    #[test]
+    fn maps_sink_input_client_to_process() {
+        let listing = "\
+Sink Input #9
+\tClient: 313
+\tProperties:
+\t\tapplication.name = \"mpv\"
+";
+        assert_eq!(
+            parse_sink_input_index(listing, CLIENTS, Some(1234), "music"),
+            Some(9)
+        );
+    }
+
+    #[test]
+    fn maps_pipewire_client_pid_property() {
+        let listing = "\
+Sink Input #10
+\tClient: 409
+\tProperties:
+\t\tapplication.name = \"mpv\"
+";
+        assert_eq!(
+            parse_sink_input_index(listing, CLIENTS, Some(5678), "music"),
+            Some(10)
         );
     }
 
