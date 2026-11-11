@@ -67,7 +67,8 @@ pub fn run(config: &Config) -> Result<()> {
         old_hook(info);
     }));
 
-    app.start_visualizer();
+    app.visualizer_ready = true;
+    app.sync_visualizer();
     let result = app.event_loop(&mut terminal);
     ratatui::restore();
     result
@@ -121,6 +122,8 @@ struct App {
     cover_protocol: Option<StatefulProtocol>,
     visualizer: Option<Visualizer>,
     visualizer_enabled: bool,
+    visualizer_ready: bool,
+    visualizer_retry_at: Option<Instant>,
     quit: bool,
 }
 
@@ -151,6 +154,8 @@ impl App {
             cover_protocol: None,
             visualizer: None,
             visualizer_enabled: true,
+            visualizer_ready: false,
+            visualizer_retry_at: None,
             quit: false,
         };
         app.refresh();
@@ -226,6 +231,10 @@ impl App {
         }
 
         self.sync_cover();
+
+        if self.visualizer_ready {
+            self.sync_visualizer();
+        }
     }
 
     fn sync_cover(&mut self) {
@@ -740,19 +749,47 @@ impl App {
         self.act(|client| client.command(&["stop"]));
     }
 
-    fn start_visualizer(&mut self) {
-        if self.visualizer_enabled && self.visualizer.is_none() {
-            self.visualizer = Some(Visualizer::start(&self.config));
+    fn sync_visualizer(&mut self) {
+        if !self.visualizer_enabled {
+            self.visualizer = None;
+            return;
+        }
+
+        // The macOS tap needs a playing mpv process; Linux captures the system
+        // monitor independently of playback.
+        #[cfg(target_os = "macos")]
+        let should_run = !self.status.idle && !self.status.path.is_empty();
+        #[cfg(not(target_os = "macos"))]
+        let should_run = true;
+
+        if !should_run {
+            self.visualizer = None;
+            self.visualizer_retry_at = None;
+            return;
+        }
+
+        if self
+            .visualizer
+            .as_ref()
+            .is_some_and(|visualizer| !visualizer.available())
+        {
+            self.visualizer = None;
+        }
+
+        if self.visualizer.is_none() {
+            let now = Instant::now();
+            if self.visualizer_retry_at.is_none_or(|retry| now >= retry) {
+                self.visualizer = Some(Visualizer::start(&self.config));
+                self.visualizer_retry_at = Some(now + Duration::from_secs(3));
+            }
         }
     }
 
     fn toggle_visualizer(&mut self) {
         self.visualizer_enabled = !self.visualizer_enabled;
-        if self.visualizer_enabled {
-            self.visualizer = Some(Visualizer::start(&self.config));
-        } else {
-            self.visualizer = None;
-        }
+        self.visualizer = None;
+        self.visualizer_retry_at = None;
+        self.sync_visualizer();
     }
 
     fn handle_queue(&mut self, key: KeyEvent) {
@@ -1346,7 +1383,7 @@ fn render_spectrum(frame: &mut Frame, area: Rect, bands: &[f32], available: bool
     }
     if !available || bands.is_empty() {
         let message = if cfg!(target_os = "macos") {
-            "visualizer unavailable (BlackHole)"
+            "visualizer unavailable (audia-tap)"
         } else {
             "visualizer unavailable"
         };
@@ -1624,6 +1661,8 @@ mod layout_fuzz_tests {
                 cover_protocol: None,
                 visualizer: None,
                 visualizer_enabled: rng.boolean(),
+                visualizer_ready: false,
+                visualizer_retry_at: None,
                 quit: false,
             };
 

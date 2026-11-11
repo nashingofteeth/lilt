@@ -1,4 +1,5 @@
 use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -13,8 +14,9 @@ const BAND_COUNT: usize = 64;
 const MIN_FREQ: f32 = 30.0;
 const MAX_FREQ: f32 = 16_000.0;
 
-/// Captures the output monitor (PulseAudio on Linux, BlackHole on macOS) and
-/// publishes log-spaced spectrum bars. All work happens off the UI thread.
+/// Captures the output monitor (PulseAudio on Linux, an audia-tap process tap
+/// on macOS) and publishes log-spaced spectrum bars. All work happens off the
+/// UI thread.
 pub struct Visualizer {
     bands: Arc<Mutex<Vec<f32>>>,
     available: Arc<AtomicBool>,
@@ -117,7 +119,54 @@ fn capture_command(_config: &Config) -> Option<Command> {
 
 #[cfg(target_os = "macos")]
 fn capture_command(config: &Config) -> Option<Command> {
-    let index = audio_device_index(&ffmpeg_device_list()?, config.capture_device.as_deref())?;
+    // An explicit capture_device opts into the ffmpeg/BlackHole fallback.
+    if let Some(device) = config.capture_device.as_deref() {
+        return blackhole_command(device);
+    }
+    audia_tap_command(crate::mpv::daemon_pid(config)?)
+}
+
+#[cfg(target_os = "macos")]
+fn audia_tap_command(pid: u32) -> Option<Command> {
+    let mut command = Command::new("audia-tap");
+    command.args([
+        "--pid",
+        &pid.to_string(),
+        "--format",
+        "f32",
+        "--sample-rate",
+        "48000",
+        "--channels",
+        "2",
+    ]);
+    command.stdin(Stdio::null());
+    // The CLI looks for audia-tap.app in the working directory to start its
+    // permission agent. Resolve the symlink and run from the app's parent.
+    if let Some(directory) = audia_tap_app_dir() {
+        command.current_dir(directory);
+    }
+    Some(command)
+}
+
+#[cfg(target_os = "macos")]
+fn audia_tap_app_dir() -> Option<PathBuf> {
+    let output = Command::new("which").arg("audia-tap").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    let path = path.canonicalize().ok()?;
+    let app = path.parent()?.parent()?.parent()?;
+    if app.extension().is_some_and(|extension| extension == "app") {
+        app.parent().map(Path::to_path_buf)
+    } else {
+        None
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn blackhole_command(device: &str) -> Option<Command> {
+    let index = audio_device_index(&ffmpeg_device_list()?, Some(device))?;
     let mut command = Command::new("ffmpeg");
     command.args([
         "-hide_banner",

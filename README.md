@@ -37,9 +37,17 @@ macOS:
 - if macFUSE is installed but not enabled, rclone prefers its
   `/usr/local/lib/libfuse.2.dylib` over FUSE-T; remove or rename that library
   (or uninstall macFUSE) so rclone falls back to `libfuse-t.dylib`
-- the spectrum visualizer needs `ffmpeg` and BlackHole 2ch
+- the spectrum visualizer taps the mpv process with `audia-tap`. Install it with
+  `brew tap Bibhav48/tap && brew trust bibhav48/tap && brew install --cask audia-tap`,
+  or build it from source with `./scripts/install-audia-tap.sh` (Command Line
+  Tools only, no Xcode, no sudo). It is ad-hoc signed, so macOS may need
+  one-time approval in System Settings; launch its agent once with
+  `open -a audia-tap --args --agent`, then grant System Audio Recording.
+  Rebuilding changes the ad-hoc signature, so macOS may ask again.
+- optional fallback: `ffmpeg` and BlackHole 2ch
   (`brew install --cask blackhole-2ch`), plus a Multi-Output device that
-  includes BlackHole and the output you listen on
+  includes BlackHole and the output you listen on; select it with
+  `capture_device`
 
 The platform-specific process and mount helpers live in `src/platform.rs`.
 
@@ -64,10 +72,10 @@ parsing, path resolution, playlist building over random directory trees, mpv
 IPC replies and status parsing, and ratatui rendering at random terminal sizes.
 Use `FUZZ_CASES=50000 ./scripts/fuzz.sh` for a longer run.
 
-On macOS, `brew install mpv fzf`, install FUSE-T, and put the official rclone
-binary ahead of Homebrew's on `PATH` (for example in `~/.local/bin`). The
-Homebrew rclone build has no `mount` support, so `music mount`/`play` would
-otherwise fail.
+On macOS, `brew install mpv fzf`, install FUSE-T and `audia-tap` (see
+Requirements), and put the official rclone binary ahead of Homebrew's on `PATH`
+(for example in `~/.local/bin`). The Homebrew rclone build has no `mount`
+support, so `music mount`/`play` would otherwise fail.
 
 ## Usage
 
@@ -186,23 +194,20 @@ log-spaced FFT bars at ~30 FPS. It shows **system output**, not just mpv — bar
 keep moving if another app is playing. `v` toggles it; toggling off/on reconnects
 to the current default sink. It is hidden automatically below 20 terminal rows.
 
-On macOS it captures **BlackHole 2ch** with `ffmpeg` instead. Create a
-Multi-Output device in Audio MIDI Setup containing BlackHole and the output you
-actually listen on, then pick one:
+On macOS the pane taps the **mpv process** with `audia-tap` instead. mpv keeps
+playing to whatever the system output is (AirPods, speakers, …), so there is no
+Multi-Output device or routing change, and the bars only react to `music`. The
+first capture prompts for System Audio Recording; `audia-tap` runs a small
+permission agent from its app bundle. If it is not installed, the pane stays
+unavailable.
 
-- make that Multi-Output the system output, so the bars follow all system audio;
-- or keep the system output unchanged and send only mpv to it, so the bars
-  follow `music`:
-
-  ```toml
-  mpv_extra_args = ["--audio-device=coreaudio/<device-id>"]
-  ```
-
-Use the id from `mpv --audio-device=help` (the quoted value, not the friendly
-name; Multi-Output devices look like `coreaudio/~:AMS2_StackedOutput:0`). The
-first capture prompts for Microphone permission; grant it to the terminal.
-`capture_device = "BlackHole 2ch"` (or an AVFoundation audio index) overrides
-device auto-detection, and `MUSIC_CAPTURE_DEVICE` overrides the config file.
+To use the `ffmpeg` + BlackHole fallback instead, set
+`capture_device = "BlackHole 2ch"` (or an AVFoundation audio index) and create a
+Multi-Output device containing BlackHole and the output you listen on.
+`MUSIC_CAPTURE_DEVICE` overrides `capture_device`. The fallback captures
+whatever is sent to BlackHole, so route mpv through that Multi-Output with
+`mpv_extra_args = ["--audio-device=coreaudio/<device-id>"]` (find the id with
+`mpv --audio-device=help`).
 
 The UI polls mpv over one persistent socket, reconnects if the daemon restarts,
 and restores the terminal on exit.
