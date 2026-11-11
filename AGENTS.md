@@ -10,9 +10,10 @@ Linux and macOS are supported. Keep OS-specific process and mount commands in
 `src/platform.rs` instead of spreading `cfg` blocks through the rest of the
 code. On macOS, `rclone mount` needs FUSE-T (or macFUSE) and the official rclone
 build; Homebrew's rclone is compiled without mount support. The spectrum pane
-uses `parec` on Linux and an `audia-tap --pid` Core Audio tap on macOS, with an
-optional `ffmpeg` + BlackHole fallback via `capture_device`; keep the capture
-command in `src/visualizer.rs`.
+is music-only on both platforms: `parec --monitor-stream` matched to the mpv PID
+via `pactl` on Linux, and an `audia-tap --pid` Core Audio tap on macOS. There is
+an optional `ffmpeg` + BlackHole fallback via `capture_device`; keep capture
+commands in `src/visualizer.rs`.
 
 ## Build and test
 

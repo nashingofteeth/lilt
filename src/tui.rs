@@ -755,12 +755,9 @@ impl App {
             return;
         }
 
-        // The macOS tap needs a playing mpv process; Linux captures the system
-        // monitor independently of playback.
-        #[cfg(target_os = "macos")]
+        // Both backends need a playing mpv stream: Linux records the mpv sink
+        // input, while macOS taps the mpv process directly.
         let should_run = !self.status.idle && !self.status.path.is_empty();
-        #[cfg(not(target_os = "macos"))]
-        let should_run = true;
 
         if !should_run {
             self.visualizer = None;
@@ -773,12 +770,7 @@ impl App {
             .as_ref()
             .is_some_and(|visualizer| !visualizer.available())
         {
-            // The macOS tap is retried while playback is active. Keep the
-            // Linux parec startup one-shot, matching the previous behavior.
-            #[cfg(target_os = "macos")]
-            {
-                self.visualizer = None;
-            }
+            self.visualizer = None;
         }
 
         if self.visualizer.is_none() {

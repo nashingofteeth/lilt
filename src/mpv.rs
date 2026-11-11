@@ -285,6 +285,8 @@ fn display_artist(artist: &str, album_artist: &str) -> String {
     }
 }
 
+pub const AUDIO_CLIENT_NAME: &str = "music";
+
 pub fn args(config: &Config) -> Vec<String> {
     let mut args = vec![
         "--idle=yes".to_string(),
@@ -299,6 +301,7 @@ pub fn args(config: &Config) -> Vec<String> {
         "--audio-buffer=0.5".to_string(),
         "--autoload-files=no".to_string(),
         "--audio-display=no".to_string(),
+        format!("--audio-client-name={AUDIO_CLIENT_NAME}"),
         "--no-resume-playback".to_string(),
         "--save-position-on-quit=no".to_string(),
         "--cache=yes".to_string(),
@@ -317,7 +320,6 @@ pub fn alive(config: &Config) -> bool {
 }
 
 /// PID of the running mpv daemon, if the pid file still points at our process.
-#[cfg(target_os = "macos")]
 pub fn daemon_pid(config: &Config) -> Option<u32> {
     let pid = read_pid(&config.mpv_pid)?;
     pid_is_ours(pid, &config.socket).then_some(pid)

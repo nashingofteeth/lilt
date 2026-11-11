@@ -15,9 +15,9 @@ const BAND_COUNT: usize = 64;
 const MIN_FREQ: f32 = 30.0;
 const MAX_FREQ: f32 = 16_000.0;
 
-/// Captures the output monitor (PulseAudio on Linux, an audia-tap process tap
-/// on macOS) and publishes log-spaced spectrum bars. All work happens off the
-/// UI thread.
+/// Captures the music player's output (PulseAudio sink input on Linux, an
+/// audia-tap process tap on macOS) and publishes log-spaced spectrum bars.
+/// All work happens off the UI thread.
 pub struct Visualizer {
     bands: Arc<Mutex<Vec<f32>>>,
     available: Arc<AtomicBool>,
@@ -106,12 +106,13 @@ fn capture_stderr(config: &Config) -> Stdio {
 
 #[cfg(target_os = "linux")]
 fn capture_command(config: &Config) -> Option<Command> {
-    let device = config
-        .capture_device
-        .as_deref()
-        .unwrap_or("@DEFAULT_MONITOR@");
     let mut command = Command::new("parec");
-    command.arg(format!("--device={device}"));
+    if let Some(device) = config.capture_device.as_deref() {
+        // Explicit override, e.g. a monitor source for system-wide capture.
+        command.arg(format!("--device={device}"));
+    } else {
+        command.arg(format!("--monitor-stream={}", mpv_sink_input(config)?));
+    }
     command.args([
         "--format=float32le",
         "--rate=48000",
@@ -120,6 +121,72 @@ fn capture_command(config: &Config) -> Option<Command> {
         "--raw",
     ]);
     Some(command)
+}
+
+#[cfg(target_os = "linux")]
+fn mpv_sink_input(config: &Config) -> Option<u32> {
+    let pid = crate::mpv::daemon_pid(config);
+    let output = Command::new("pactl")
+        .args(["list", "sink-inputs"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_sink_input_index(
+        &String::from_utf8_lossy(&output.stdout),
+        pid,
+        crate::mpv::AUDIO_CLIENT_NAME,
+    )
+}
+
+/// Find the mpv PulseAudio sink-input in `pactl list sink-inputs` output.
+/// Prefer the daemon PID; fall back to mpv's unique audio client name because
+/// PipeWire does not always expose `application.process.id`.
+#[cfg(any(target_os = "linux", test))]
+fn parse_sink_input_index(listing: &str, pid: Option<u32>, client_name: &str) -> Option<u32> {
+    let wanted_pid = pid.map(|pid| pid.to_string());
+    let mut name_match = None;
+
+    for block in listing.split("Sink Input #").skip(1) {
+        let mut lines = block.lines();
+        let Some(index) = lines
+            .next()
+            .and_then(|line| line.split_whitespace().next())
+            .and_then(|value| value.parse().ok())
+        else {
+            continue;
+        };
+
+        let mut matches_pid = false;
+        let mut matches_name = false;
+        for line in lines {
+            let Some((key, value)) = line.trim().split_once('=') else {
+                continue;
+            };
+            let value = value.trim().trim_matches('"');
+            match key.trim() {
+                "application.process.id" => {
+                    matches_pid = wanted_pid.as_deref() == Some(value);
+                }
+                "application.name" | "application.id" | "node.name" => {
+                    matches_name |= value == client_name;
+                }
+                _ => {}
+            }
+        }
+
+        if matches_pid {
+            return Some(index);
+        }
+        if matches_name && name_match.is_none() {
+            name_match = Some(index);
+        }
+    }
+
+    name_match
 }
 
 #[cfg(target_os = "macos")]
@@ -468,6 +535,69 @@ mod tests {
             assert!(bands.iter().all(|value| value.is_finite()));
             assert!(bands.iter().all(|value| (0.0..=1.0).contains(value)));
         }
+    }
+
+    const SINK_INPUTS: &str = "\
+Sink Input #41
+\tProperties:
+\t\tapplication.name = \"mpv\"
+\t\tapplication.process.id = \"1234\"
+Sink Input #42
+\tProperties:
+\t\tapplication.name = \"firefox\"
+\t\tapplication.process.id = \"999\"
+";
+
+    #[test]
+    fn finds_sink_input_for_process() {
+        assert_eq!(
+            parse_sink_input_index(SINK_INPUTS, Some(1234), "music"),
+            Some(41)
+        );
+        assert_eq!(
+            parse_sink_input_index(SINK_INPUTS, Some(999), "music"),
+            Some(42)
+        );
+        assert_eq!(parse_sink_input_index(SINK_INPUTS, Some(1), "music"), None);
+    }
+
+    #[test]
+    fn accepts_unquoted_sink_input_pid() {
+        let listing = "Sink Input #7\napplication.process.id = 55\n";
+        assert_eq!(parse_sink_input_index(listing, Some(55), "music"), Some(7));
+    }
+
+    #[test]
+    fn falls_back_to_audio_client_name() {
+        let listing = "\
+Sink Input #9
+\tProperties:
+\t\tapplication.name = \"music\"
+\t\tapplication.id = \"music\"
+";
+        assert_eq!(parse_sink_input_index(listing, None, "music"), Some(9));
+        assert_eq!(
+            parse_sink_input_index(listing, Some(1234), "music"),
+            Some(9)
+        );
+        assert_eq!(parse_sink_input_index(listing, None, "mpv"), None);
+    }
+
+    #[test]
+    fn process_id_takes_priority_over_name() {
+        let listing = "\
+Sink Input #8
+\tProperties:
+\t\tapplication.name = \"music\"
+Sink Input #9
+\tProperties:
+\t\tapplication.name = \"music\"
+\t\tapplication.process.id = \"1234\"
+";
+        assert_eq!(
+            parse_sink_input_index(listing, Some(1234), "music"),
+            Some(9)
+        );
     }
 
     const DEVICE_LIST: &str = "\

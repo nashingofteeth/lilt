@@ -24,7 +24,7 @@ keys and MPRIS panels work too.
 
 Linux:
 
-- `parec` (pulseaudio-utils) for the spectrum visualizer
+- `parec` and `pactl` (pulseaudio-utils) for the spectrum visualizer
 - `mountpoint` and `fusermount3` (util-linux) for mount detection/unmount
 - `setsid` and `XDG_RUNTIME_DIR` for the detached player
 
@@ -123,7 +123,7 @@ detached mpv daemon and exits, so the picker window closes immediately.
 `music controls` is a ratatui UI with three panes:
 
 - **Now Playing** — artist/album, title, progress, volume/shuffle/repeat.
-- **Spectrum** — live bars from the system output monitor (`v` toggles it).
+- **Spectrum** — live bars from the music player’s output (`v` toggles it).
 - **Queue** — always visible, with the current track marked.
 
 `Tab` switches focus between Now Playing and Queue; the focused pane's border
@@ -189,12 +189,15 @@ guessed title.
 
 ### Visualizer
 
-The spectrum pane captures the default output monitor with `parec` and renders
-log-spaced FFT bars at ~30 FPS. It shows **system output**, not just mpv — bars
-keep moving if another app is playing. `v` toggles it; toggling off/on reconnects
-to the current default sink. It is hidden automatically below 20 terminal rows.
-On Linux, `capture_device` can override the PulseAudio source name (default
-`@DEFAULT_MONITOR@`).
+The spectrum pane captures the **mpv stream only** on Linux: it matches the mpv
+daemon PID in `pactl list sink-inputs`, then runs
+`parec --monitor-stream=<index>`. The daemon runs with
+`--audio-client-name=music` so its stream can be found even when PipeWire omits
+the process ID; restart mpv after upgrading from an older build. Bars stop when
+the music stops and other apps do not affect them. `v` toggles it, and it is
+hidden below 20 terminal rows.
+Set `capture_device` to explicitly record another PulseAudio source instead;
+recording a monitor source will make it system-wide again.
 
 On macOS the pane taps the **mpv process** with `audia-tap` instead. mpv keeps
 playing to whatever the system output is (AirPods, speakers, …), so there is no
