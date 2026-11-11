@@ -21,8 +21,9 @@ fn rclone_args(config: &Config) -> Vec<std::ffi::OsString> {
         "--dir-cache-time=10m".into(),
     ];
     // Avoid AppleDouble sidecar traffic; the library is read-only anyway.
-    #[cfg(target_os = "macos")]
-    args.push("--noappledouble".into());
+    if cfg!(target_os = "macos") {
+        args.push("--noappledouble".into());
+    }
     args
 }
 

@@ -193,6 +193,8 @@ The spectrum pane captures the default output monitor with `parec` and renders
 log-spaced FFT bars at ~30 FPS. It shows **system output**, not just mpv — bars
 keep moving if another app is playing. `v` toggles it; toggling off/on reconnects
 to the current default sink. It is hidden automatically below 20 terminal rows.
+On Linux, `capture_device` can override the PulseAudio source name (default
+`@DEFAULT_MONITOR@`).
 
 On macOS the pane taps the **mpv process** with `audia-tap` instead. mpv keeps
 playing to whatever the system output is (AirPods, speakers, …), so there is no

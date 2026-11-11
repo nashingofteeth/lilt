@@ -317,6 +317,7 @@ pub fn alive(config: &Config) -> bool {
 }
 
 /// PID of the running mpv daemon, if the pid file still points at our process.
+#[cfg(target_os = "macos")]
 pub fn daemon_pid(config: &Config) -> Option<u32> {
     let pid = read_pid(&config.mpv_pid)?;
     pid_is_ours(pid, &config.socket).then_some(pid)

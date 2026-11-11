@@ -1,4 +1,5 @@
 use std::io::Read;
+#[cfg(target_os = "macos")]
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -104,10 +105,14 @@ fn capture_stderr(config: &Config) -> Stdio {
 }
 
 #[cfg(target_os = "linux")]
-fn capture_command(_config: &Config) -> Option<Command> {
+fn capture_command(config: &Config) -> Option<Command> {
+    let device = config
+        .capture_device
+        .as_deref()
+        .unwrap_or("@DEFAULT_MONITOR@");
     let mut command = Command::new("parec");
+    command.arg(format!("--device={device}"));
     command.args([
-        "--device=@DEFAULT_MONITOR@",
         "--format=float32le",
         "--rate=48000",
         "--channels=2",

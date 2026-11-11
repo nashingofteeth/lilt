@@ -773,7 +773,12 @@ impl App {
             .as_ref()
             .is_some_and(|visualizer| !visualizer.available())
         {
-            self.visualizer = None;
+            // The macOS tap is retried while playback is active. Keep the
+            // Linux parec startup one-shot, matching the previous behavior.
+            #[cfg(target_os = "macos")]
+            {
+                self.visualizer = None;
+            }
         }
 
         if self.visualizer.is_none() {
