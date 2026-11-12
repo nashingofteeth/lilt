@@ -792,7 +792,8 @@ impl App {
     }
 
     fn cycle_shuffle(&mut self) {
-        self.act(|client| client.command(&["cycle", "shuffle"]));
+        self.act(player::toggle_shuffle_client);
+        self.reload_playlist();
     }
 
     fn cycle_repeat(&mut self) {

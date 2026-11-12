@@ -181,15 +181,12 @@ pub fn load_directory(config: &Config, path: &std::path::Path, shuffle: bool) ->
     mpv::ensure_daemon(config)?;
 
     let mut client = Mpv::connect(&config.socket)?;
-    set_bool(&mut client, "shuffle", false)?;
+    set_bool(&mut client, "shuffle", shuffle)?;
     client.command_values(vec![
         json!("loadfile"),
         json!(path.to_string_lossy()),
         json!("replace"),
     ])?;
-    if shuffle {
-        set_bool(&mut client, "shuffle", true)?;
-    }
     set_bool(&mut client, "pause", false)?;
     Ok(())
 }
@@ -211,15 +208,12 @@ fn load_inputs(config: &Config, inputs: &[queue::Input], shuffle: bool) -> Resul
     let (playlist, _count) = queue::build_input_playlist(config, inputs)?;
     let result = (|| -> Result<Mpv> {
         let mut client = Mpv::connect(&config.socket)?;
-        set_bool(&mut client, "shuffle", false)?;
+        set_bool(&mut client, "shuffle", shuffle)?;
         client.command_values(vec![
             json!("loadlist"),
             json!(playlist.to_string_lossy()),
             json!("replace"),
         ])?;
-        if shuffle {
-            set_bool(&mut client, "shuffle", true)?;
-        }
         set_bool(&mut client, "pause", false)?;
         Ok(client)
     })();
@@ -532,11 +526,27 @@ pub fn seek(config: &Config, value: &str) -> Result<()> {
 pub fn shuffle(config: &Config, mode: Option<&str>) -> Result<()> {
     let mut client = connect(config)?;
     match mode.unwrap_or("toggle") {
-        "on" | "yes" | "true" => set_bool(&mut client, "shuffle", true),
-        "off" | "no" | "false" => set_bool(&mut client, "shuffle", false),
-        "toggle" => client.command(&["cycle", "shuffle"]),
+        "on" | "yes" | "true" => set_shuffle_client(&mut client, true),
+        "off" | "no" | "false" => set_shuffle_client(&mut client, false),
+        "toggle" => toggle_shuffle_client(&mut client),
         other => bail!("usage: music shuffle [on|off|toggle] (got {other})"),
     }
+}
+
+pub fn toggle_shuffle_client(client: &mut Mpv) -> Result<()> {
+    let enabled = client
+        .try_get("shuffle")?
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    set_shuffle_client(client, !enabled)
+}
+
+pub fn set_shuffle_client(client: &mut Mpv, enabled: bool) -> Result<()> {
+    set_bool(client, "shuffle", enabled)?;
+    if enabled {
+        client.command(&["playlist-shuffle"])?;
+    }
+    Ok(())
 }
 
 pub fn repeat(config: &Config, mode: Option<&str>) -> Result<()> {
