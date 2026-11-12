@@ -701,7 +701,7 @@ impl App {
     }
 
     fn toggle_pause(&mut self) {
-        self.act(|client| client.command(&["cycle", "pause"]));
+        self.act(player::toggle_client);
     }
 
     fn next_track(&mut self) {
@@ -1247,9 +1247,13 @@ impl App {
         }
 
         if self.status.idle && self.status.media_title.is_empty() {
+            let message = if self.status.playlist_count > 0 {
+                "queue ended — press space to restart"
+            } else {
+                "queue empty — press `a` to add"
+            };
             frame.render_widget(
-                Paragraph::new("queue empty — press `a` to add")
-                    .style(Style::default().fg(Color::DarkGray)),
+                Paragraph::new(message).style(Style::default().fg(Color::DarkGray)),
                 area,
             );
             return;

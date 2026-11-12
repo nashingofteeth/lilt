@@ -262,7 +262,16 @@ fn set_bool(client: &mut Mpv, name: &str, value: bool) -> Result<()> {
 }
 
 pub fn toggle(config: &Config) -> Result<()> {
-    connect(config)?.command(&["cycle", "pause"])
+    let mut client = connect(config)?;
+    toggle_client(&mut client)
+}
+
+pub fn toggle_client(client: &mut Mpv) -> Result<()> {
+    if is_idle(client)? {
+        resume_client(client)
+    } else {
+        client.command(&["cycle", "pause"])
+    }
 }
 
 pub fn pause(config: &Config) -> Result<()> {
@@ -272,7 +281,35 @@ pub fn pause(config: &Config) -> Result<()> {
 
 pub fn resume(config: &Config) -> Result<()> {
     let mut client = connect(config)?;
-    set_bool(&mut client, "pause", false)
+    resume_client(&mut client)
+}
+
+pub fn resume_client(client: &mut Mpv) -> Result<()> {
+    if is_idle(client)? {
+        let count = queue_count(client)?;
+        if count <= 0 {
+            bail!("queue empty");
+        }
+        client.command_values(vec![json!("playlist-play-index"), json!(0)])?;
+    }
+    set_bool(client, "pause", false)
+}
+
+fn is_idle(client: &mut Mpv) -> Result<bool> {
+    if client
+        .try_get("idle-active")?
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+    {
+        return Ok(true);
+    }
+    // At the end of a playlist mpv can keep idle-active false for a moment
+    // while it unloads the file. A missing path means there is nothing loaded.
+    let has_path = client
+        .try_get("path")?
+        .and_then(|value| value.as_str().map(|path| !path.is_empty()))
+        .unwrap_or(false);
+    Ok(!has_path)
 }
 
 pub fn next(config: &Config) -> Result<()> {

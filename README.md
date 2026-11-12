@@ -108,7 +108,8 @@ Playback
 ```
 
 `music queue` prints one numbered track per line, with `>` marking the current
-track; `music list` is an alias.
+track; `music list` is an alias. `music resume` and `music toggle` restart the
+queue from the beginning when playback has ended.
 
 `PATH` may be absolute, relative to the current directory, or relative to the
 music mount — so `music play "Brian Eno"` and
@@ -148,7 +149,7 @@ open.
 
 | Key | Action |
 | --- | --- |
-| `space` | pause/resume |
+| `space` | pause/resume, or restart the queue when playback has ended |
 | `n` / `p` | next / previous track |
 | `x` | stop playback (keep mpv running) |
 | `h` / `l` | seek −10s / +10s |
