@@ -617,6 +617,14 @@ impl App {
                 self.stop_playback();
                 return;
             }
+            KeyCode::Char('f') if !ctrl => {
+                if self.status.path.is_empty() {
+                    self.show_message("nothing playing".to_string());
+                } else if let Err(error) = player::open_path(&self.status.path) {
+                    self.show_message(format!("{error}"));
+                }
+                return;
+            }
             _ => {}
         }
 
@@ -1360,18 +1368,20 @@ fn help_lines(focus: Focus, width: u16) -> Vec<Line<'static>> {
         match focus {
             Focus::NowPlaying => vec![
                 Line::from("space pause  j/k next/prev  h/l ←/→ seek  -/+ ↑/↓ vol  g/G first/last"),
-                Line::from("s/r/m  x stop  o/b play  a add  v viz  Tab queue  / filter  q/Q"),
+                Line::from("s/r/m  x stop  o play  a add  v viz  Tab queue  / filter  f open  q/Q"),
             ],
             Focus::Queue => vec![
                 Line::from("j/k move  g/G first/last  Ctrl-d/u half  Ctrl-f/b page  Enter play"),
-                Line::from("N+Enter/G jump  space pause  x stop  / filter  o/a  v viz  Tab"),
+                Line::from(
+                    "N+Enter/G jump  space pause  x stop  / filter  o/a  v viz  f open  Tab",
+                ),
             ],
         }
     } else {
         match focus {
             Focus::NowPlaying => vec![
                 Line::from("space j/k h/l H/L -/+ g/G"),
-                Line::from("s r m x o/b a v Tab / q/Q"),
+                Line::from("s r m x f o/b a v Tab / q/Q"),
             ],
             Focus::Queue => vec![
                 Line::from("j/k g/G ^d/^u ^f/^b Enter"),
@@ -2005,6 +2015,18 @@ mod key_tests {
 
         app.handle_key(key(KeyCode::Enter));
         assert_eq!(app.focus, Focus::Queue);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn open_key_without_playback_shows_message() {
+        let (mut app, base) = app_with_items(&["a"]);
+        app.status.path.clear();
+
+        app.handle_key(key(KeyCode::Char('f')));
+        let message = app.message.as_ref().map(|(message, _)| message.as_str());
+        assert_eq!(message, Some("nothing playing"));
 
         let _ = std::fs::remove_dir_all(&base);
     }

@@ -58,6 +58,7 @@ Current playback/queue mapping:
 | repeat | `repeat [off\|all\|one]` | `r` |
 | jump to queue number | `jump N` | `N` then `Enter`/`G` |
 | first/last | `first`, `last` | `g`/`gg`, `G` |
+| open playing item | `open` | `f` |
 | quit mpv | `quit` | `Q` |
 | detach TUI | — | `q` |
 

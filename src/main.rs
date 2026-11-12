@@ -51,6 +51,8 @@ enum Command {
     /// List the current queue
     #[command(visible_alias = "list")]
     Queue,
+    /// Open the playing URL or reveal the playing file
+    Open,
     /// Toggle pause
     Toggle,
     /// Pause playback
@@ -127,6 +129,7 @@ fn run() -> Result<()> {
         Command::Add { paths } => player::add(&config, &paths),
         Command::Browse => browse::browse(&config),
         Command::Queue => player::queue(&config),
+        Command::Open => player::open(&config),
         Command::Toggle => player::toggle(&config),
         Command::Pause => player::pause(&config),
         Command::Resume => player::resume(&config),

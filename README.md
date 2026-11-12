@@ -95,6 +95,7 @@ Playback
   music add SOURCE...            Append local paths or URLs
   music browse                   Pick artists and albums with fzf
   music queue                    List the queue, current track marked
+  music open                     Open the playing URL or reveal the local file
   music toggle | pause | resume
   music next | prev | stop
   music mute [on|off|toggle]
@@ -184,6 +185,7 @@ open.
 | `o` (or `b`) | browse library → play now (replace queue) |
 | `a` | browse library → add to queue |
 | `v` | visualizer on/off |
+| `f` | open the playing URL or reveal the local file |
 | `Tab` | switch focus (Now Playing ↔ Queue) |
 | `/` | focus the queue and filter it |
 | `1–9…` then `Enter` or `G` | jump to that queue number (from either pane) |

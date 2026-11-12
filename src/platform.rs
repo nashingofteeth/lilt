@@ -151,9 +151,113 @@ pub fn unmount(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+pub fn open_url(url: &str) -> Result<()> {
+    let status = Command::new("xdg-open")
+        .arg(url)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .context("running xdg-open")?;
+    if !status.success() {
+        bail!("xdg-open failed for {url}");
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+pub fn open_url(url: &str) -> Result<()> {
+    let status = Command::new("open")
+        .arg(url)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .context("running open")?;
+    if !status.success() {
+        bail!("open failed for {url}");
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+pub fn reveal_file(path: &Path) -> Result<()> {
+    let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let uri = file_uri(&path);
+    let highlighted = Command::new("dbus-send")
+        .args([
+            "--session",
+            "--dest=org.freedesktop.FileManager1",
+            "--type=method_call",
+            "/org/freedesktop/FileManager1",
+            "org.freedesktop.FileManager1.ShowItems",
+        ])
+        .arg(format!("array:string:{uri}"))
+        .arg("string:")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    if highlighted {
+        return Ok(());
+    }
+
+    let parent = path.parent().unwrap_or_else(|| Path::new("/"));
+    let status = Command::new("xdg-open")
+        .arg(parent)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .context("running xdg-open")?;
+    if !status.success() {
+        bail!("failed to open {}", parent.display());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+pub fn reveal_file(path: &Path) -> Result<()> {
+    let status = Command::new("open")
+        .arg("-R")
+        .arg(path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .context("running open -R")?;
+    if !status.success() {
+        bail!("failed to reveal {}", path.display());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn file_uri(path: &Path) -> String {
+    use std::fmt::Write;
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut uri = String::from("file://");
+    for byte in path.as_os_str().as_bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(*byte, b'/' | b'-' | b'.' | b'_' | b'~') {
+            uri.push(*byte as char);
+        } else {
+            let _ = write!(uri, "%{byte:02X}");
+        }
+    }
+    uri
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn file_uri_percent_encodes_special_characters() {
+        assert_eq!(
+            file_uri(Path::new("/tmp/a b#c.flac")),
+            "file:///tmp/a%20b%23c.flac"
+        );
+    }
 
     #[test]
     fn current_process_is_alive() {

@@ -78,6 +78,7 @@ fn fuzz_safe_cli_execution_never_panics() {
         "stop",
         "queue",
         "list",
+        "open",
         "mute",
         "jump",
         "first",

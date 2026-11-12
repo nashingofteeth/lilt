@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use crate::config::Config;
 use crate::mount;
 use crate::mpv::{self, Mpv, Repeat, Status};
+use crate::platform;
 use crate::queue;
 
 pub fn format_time(value: Option<f64>) -> String {
@@ -104,6 +105,29 @@ pub fn status(config: &Config) -> Result<()> {
     let mut client = Mpv::connect(&config.socket)?;
     println!("{}", status_line(&client.status()?));
     Ok(())
+}
+
+pub fn open(config: &Config) -> Result<()> {
+    let mut client = connect(config)?;
+    let status = client.status()?;
+    if status.path.is_empty() {
+        bail!("nothing playing");
+    }
+    open_path(&status.path)?;
+    println!("opened {}", status.path);
+    Ok(())
+}
+
+pub fn open_path(path: &str) -> Result<()> {
+    if queue::is_url(path) {
+        platform::open_url(path)
+    } else {
+        let path = Path::new(path);
+        if !path.exists() {
+            bail!("no such file: {}", path.display());
+        }
+        platform::reveal_file(path)
+    }
 }
 
 pub fn queue(config: &Config) -> Result<()> {
