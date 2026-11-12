@@ -28,6 +28,7 @@ Linux:
 - `parec` and `pactl` (pulseaudio-utils) for the spectrum visualizer
 - `mountpoint` and `fusermount3` (util-linux) for mount detection/unmount
 - `setsid` and `XDG_RUNTIME_DIR` for the detached player
+- `xdg-open` (xdg-utils) for `lilt open`; `dbus-send` (dbus) is optional
 
 macOS:
 
@@ -238,7 +239,8 @@ unavailable.
 To use the `ffmpeg` + BlackHole fallback instead, set
 `capture_device = "BlackHole 2ch"` (or an AVFoundation audio index) and create a
 Multi-Output device containing BlackHole and the output you listen on.
-`LILT_CAPTURE_DEVICE` overrides `capture_device`; the legacy `MUSIC_CAPTURE_DEVICE` still works during migration. The fallback captures
+`LILT_CAPTURE_DEVICE` overrides `capture_device`; the legacy
+`MUSIC_CAPTURE_DEVICE` still works during migration. The fallback captures
 whatever is sent to BlackHole, so route mpv through that Multi-Output with
 `mpv_extra_args = ["--audio-device=coreaudio/<device-id>"]` (find the id with
 `mpv --audio-device=help`).
@@ -262,7 +264,9 @@ mpv_extra_args = []
 `mpv_extra_args` is appended to the daemon's mpv command line (useful for
 testing with `--ao=null`). During migration, Lilt falls back to
 `~/.config/music/config.toml` and the legacy `MUSIC_*` environment variables.
-The installer also creates a temporary `music` alias and fish completions for it.
+The installer also creates a temporary `music` alias and stops a pre-rename
+`music` daemon if one is still running. Fish completions for both names are in
+`completions/`.
 
 ### Gapless playback
 

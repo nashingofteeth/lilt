@@ -240,14 +240,14 @@ impl App {
                 Err(_) => {
                     self.mpv = None;
                     self.status = Status::default();
-                    if self.saw_mpv {
+                    if self.saw_mpv && mpv::daemon_pid(&self.config).is_none() {
                         self.mpv_lost_at.get_or_insert_with(Instant::now);
                     }
                 }
             }
         } else {
             self.status = Status::default();
-            if self.saw_mpv {
+            if self.saw_mpv && mpv::daemon_pid(&self.config).is_none() {
                 self.mpv_lost_at.get_or_insert_with(Instant::now);
             }
         }
@@ -293,6 +293,8 @@ impl App {
         let path = self.status.path.clone();
         let (key, local) = if path.is_empty() {
             (None, None)
+        } else if let Some(url) = queue::external_url(&path) {
+            (Some(CoverKey::Url(url.to_string())), None)
         } else if queue::is_url(&path) {
             (Some(CoverKey::Url(path)), None)
         } else {
@@ -1301,7 +1303,7 @@ fn help_lines(focus: Focus, width: u16) -> Vec<Line<'static>> {
         match focus {
             Focus::NowPlaying => vec![
                 Line::from("space pause  j/k next/prev  h/l 10s  H/L 60s  -/+ vol"),
-                Line::from("s/r/m  x stop  o play  a add  v viz  Tab queue  / filter  f open  q/Q"),
+                Line::from("s/r/m  x  o/b play  a add  v viz  Tab queue  / filter  f open  q/Q"),
             ],
             Focus::Queue => vec![
                 Line::from("j/k move  Ctrl-d/u half  Ctrl-f/b page  Enter play"),

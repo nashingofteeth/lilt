@@ -21,6 +21,7 @@ pub fn load(dir: &Path, track: &Path) -> Option<DynamicImage> {
 
 /// Fetch a thumbnail for an external URL with yt-dlp, caching it on disk.
 pub fn load_url(cache_dir: &Path, url: &str) -> Option<DynamicImage> {
+    let url = crate::queue::external_url(url).unwrap_or(url);
     let covers = cache_dir.join("covers");
     std::fs::create_dir_all(&covers).ok()?;
     let hash = url_hash(url);
@@ -175,6 +176,24 @@ mod tests {
             .expect("write cached thumbnail");
 
         let cover = load_url(&cache, url).expect("cached thumbnail");
+        assert_eq!((cover.width(), cover.height()), (8, 8));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn uses_cached_thumbnail_for_ytdl_url() {
+        let base = unique_base("cover-url-ytdl");
+        let cache = base.join("cache");
+        let covers = cache.join("covers");
+        std::fs::create_dir_all(&covers).unwrap();
+        let url = "https://example.com/video";
+        let image = image::RgbImage::from_pixel(8, 8, image::Rgb([10, 20, 30]));
+        image
+            .save(covers.join(format!("{}.png", url_hash(url))))
+            .expect("write cached thumbnail");
+
+        let cover = load_url(&cache, &format!("ytdl://{url}")).expect("cached thumbnail");
         assert_eq!((cover.width(), cover.height()), (8, 8));
 
         let _ = std::fs::remove_dir_all(&base);

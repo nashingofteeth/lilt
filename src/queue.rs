@@ -42,6 +42,12 @@ pub fn is_url(input: &str) -> bool {
         })
 }
 
+/// The URL to hand to browsers and yt-dlp, with mpv's `ytdl://` wrapper removed.
+pub fn external_url(input: &str) -> Option<&str> {
+    let input = input.strip_prefix("ytdl://").unwrap_or(input);
+    is_url(input).then_some(input)
+}
+
 /// Resolve a CLI input to either a URL or a local path.
 pub fn resolve_input(config: &Config, input: &str) -> Result<Input> {
     if is_url(input) {
@@ -156,6 +162,20 @@ mod tests {
         assert!(!is_url("https://"));
         assert!(!is_url("Artist/Album/Track.flac"));
         assert!(!is_url("C:/Music/track.flac"));
+    }
+
+    #[test]
+    fn unwraps_ytdl_urls_for_external_use() {
+        assert_eq!(
+            external_url("ytdl://https://example.com/video"),
+            Some("https://example.com/video")
+        );
+        assert_eq!(
+            external_url("https://example.com/video"),
+            Some("https://example.com/video")
+        );
+        assert_eq!(external_url("/music/track.flac"), None);
+        assert_eq!(external_url("ytdl://not-a-url"), None);
     }
 
     #[test]

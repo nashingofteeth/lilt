@@ -113,14 +113,19 @@ pub fn open(config: &Config) -> Result<()> {
     if status.path.is_empty() {
         bail!("nothing playing");
     }
+    let external = queue::external_url(&status.path).is_some();
     open_path(&status.path)?;
-    println!("opened {}", status.path);
+    if external {
+        println!("opened {}", status.path);
+    } else {
+        println!("revealed {}", status.path);
+    }
     Ok(())
 }
 
 pub fn open_path(path: &str) -> Result<()> {
-    if queue::is_url(path) {
-        platform::open_url(path)
+    if let Some(url) = queue::external_url(path) {
+        platform::open_url(url)
     } else {
         let path = Path::new(path);
         if !path.exists() {
