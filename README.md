@@ -140,6 +140,10 @@ stall the UI. While art is loading or unavailable, the same area shows a small
 placeholder. Tracks without a title tag show their file path instead of a
 guessed title.
 
+If the mpv daemon exits (`music quit`, `music unmount`, or `music restart`), the
+panel closes automatically after a short grace period. `music stop` leaves it
+open.
+
 **Common keys**
 
 | Key | Action |

@@ -124,12 +124,15 @@ struct App {
     visualizer_enabled: bool,
     visualizer_ready: bool,
     visualizer_retry_at: Option<Instant>,
+    saw_mpv: bool,
+    mpv_lost_at: Option<Instant>,
     quit: bool,
 }
 
 impl App {
     fn new(config: Config) -> Self {
         let mpv = Mpv::connect(&config.socket).ok();
+        let saw_mpv = mpv.is_some();
         let mut app = Self {
             mounted: mount::is_mounted(&config.music_dir),
             config,
@@ -156,6 +159,8 @@ impl App {
             visualizer_enabled: true,
             visualizer_ready: false,
             visualizer_retry_at: None,
+            saw_mpv,
+            mpv_lost_at: None,
             quit: false,
         };
         app.refresh();
@@ -194,6 +199,10 @@ impl App {
                 self.refresh();
             }
 
+            if daemon_loss_expired(self.mpv_lost_at, Instant::now()) {
+                self.quit = true;
+            }
+
             if self.quit {
                 return Ok(());
             }
@@ -213,14 +222,24 @@ impl App {
 
         if let Some(client) = self.mpv.as_mut() {
             match client.status() {
-                Ok(status) => self.status = status,
+                Ok(status) => {
+                    self.status = status;
+                    self.saw_mpv = true;
+                    self.mpv_lost_at = None;
+                }
                 Err(_) => {
                     self.mpv = None;
                     self.status = Status::default();
+                    if self.saw_mpv {
+                        self.mpv_lost_at.get_or_insert_with(Instant::now);
+                    }
                 }
             }
         } else {
             self.status = Status::default();
+            if self.saw_mpv {
+                self.mpv_lost_at.get_or_insert_with(Instant::now);
+            }
         }
 
         if self.playlist.is_empty()
@@ -1366,6 +1385,10 @@ fn progress_line(
     Line::from(spans)
 }
 
+fn daemon_loss_expired(lost_at: Option<Instant>, now: Instant) -> bool {
+    lost_at.is_some_and(|lost| now.saturating_duration_since(lost) >= Duration::from_secs(1))
+}
+
 fn border_style(focused: bool) -> Style {
     if focused {
         Style::default().fg(Color::Cyan)
@@ -1545,6 +1568,23 @@ mod hint_tests {
 }
 
 #[cfg(test)]
+mod daemon_tests {
+    use super::*;
+
+    #[test]
+    fn daemon_loss_waits_for_the_grace_period() {
+        let now = Instant::now();
+        assert!(!daemon_loss_expired(None, now));
+        assert!(!daemon_loss_expired(Some(now), now));
+        assert!(!daemon_loss_expired(
+            Some(now - Duration::from_millis(500)),
+            now
+        ));
+        assert!(daemon_loss_expired(Some(now - Duration::from_secs(1)), now));
+    }
+}
+
+#[cfg(test)]
 mod fuzz_tests {
     use super::*;
     use crate::test_support::{Rng, cases};
@@ -1660,6 +1700,8 @@ mod layout_fuzz_tests {
                 visualizer_enabled: rng.boolean(),
                 visualizer_ready: false,
                 visualizer_retry_at: None,
+                saw_mpv: false,
+                mpv_lost_at: None,
                 quit: false,
             };
 
