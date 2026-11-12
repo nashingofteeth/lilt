@@ -4,6 +4,7 @@ mod cover;
 mod logs;
 mod mount;
 mod mpv;
+mod nts;
 mod platform;
 mod player;
 mod queue;
@@ -48,6 +49,11 @@ enum Command {
     },
     /// Pick artists and albums with fzf
     Browse,
+    /// Play NTS Radio live, an Infinite Mixtape, or list stations
+    Nts {
+        /// 1, 2, "list", or a mixtape alias/title
+        target: Option<String>,
+    },
     /// List the current queue
     #[command(visible_alias = "list")]
     Queue,
@@ -124,6 +130,10 @@ fn run() -> Result<()> {
         Command::Play { paths, shuffle } => player::play(&config, &paths, shuffle),
         Command::Add { paths } => player::add(&config, &paths),
         Command::Browse => browse::browse(&config),
+        Command::Nts { target } => match target.as_deref() {
+            Some("list") => nts::list(),
+            target => nts::play(&config, target),
+        },
         Command::Queue => player::queue(&config),
         Command::Open => player::open(&config),
         Command::Toggle => player::toggle(&config),
@@ -159,6 +169,9 @@ mod fuzz_tests {
         let pool = [
             "play",
             "add",
+            "browse",
+            "nts",
+            "slow-focus",
             "volume",
             "seek",
             "shuffle",

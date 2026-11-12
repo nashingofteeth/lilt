@@ -57,8 +57,9 @@ Current playback/queue mapping:
 | volume | `volume N\|+N\|-N` | `-`, `+`, arrows |
 | shuffle | `shuffle [on\|off\|toggle]` | `s` |
 | repeat | `repeat [off\|all\|one]` | `r` |
-| jump to queue number | `jump N` | `N` then `Enter`/`G` |
+| jump to queue number | `jump N` | digits then `Enter`/`G` |
 | open playing item | `open` | `f` |
+| NTS live/mixtapes | `nts [1\|2\|list\|ALIAS]` | `N` (picker) |
 | quit mpv | `quit` | `Q` |
 | detach TUI | — | `q` |
 
@@ -79,6 +80,8 @@ overlay. Keep them short, accurate, and in sync with the README.
 - Keep YouTube audio-only with `--ytdl-format=bestaudio/best`.
 - URL covers come from `yt-dlp` in `cover::load_url` and are cached under
   `cache_dir/covers`; playlist entries get per-video thumbnails.
+- NTS Radio station/show metadata and artwork come from the public NTS API via
+  `curl`; keep resolution and the current-station sidecar in `src/nts.rs`.
 - Surface mpv playback failures from `end-file` events and the mpv log.
 
 ## Style

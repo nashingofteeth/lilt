@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use crate::config::Config;
 use crate::mount;
 use crate::mpv::{self, Mpv, Repeat, Status};
+use crate::nts;
 use crate::platform;
 use crate::queue;
 
@@ -103,7 +104,9 @@ pub fn status(config: &Config) -> Result<()> {
     }
 
     let mut client = Mpv::connect(&config.socket)?;
-    println!("{}", status_line(&client.status()?));
+    let mut status = client.status()?;
+    nts::apply_status(config, &mut status);
+    println!("{}", status_line(&status));
     Ok(())
 }
 
@@ -155,12 +158,20 @@ pub fn queue(config: &Config) -> Result<()> {
         return Ok(());
     }
 
+    let nts = nts::load_current(config);
     for (index, entry) in entries.iter().enumerate() {
         let marker = if index as i64 == current { ">" } else { " " };
-        let name = entry
-            .title
-            .clone()
-            .unwrap_or_else(|| display_name(&entry.filename));
+        let name = if let Some(station) = nts
+            .as_ref()
+            .filter(|station| station.stream_url == entry.filename)
+        {
+            station.title.clone()
+        } else {
+            entry
+                .title
+                .clone()
+                .unwrap_or_else(|| display_name(&entry.filename))
+        };
         println!("{marker} {:>4}  {name}", index + 1);
     }
     Ok(())

@@ -113,7 +113,7 @@ fn list_dirs(path: &std::path::Path) -> Result<Vec<PathBuf>> {
     Ok(dirs)
 }
 
-fn fzf(lines: &[String], args: &[&str]) -> Result<Vec<String>> {
+pub(crate) fn fzf(lines: &[String], args: &[&str]) -> Result<Vec<String>> {
     let mut child = Command::new("fzf")
         .args(args)
         .stdin(Stdio::piped())

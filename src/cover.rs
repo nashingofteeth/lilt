@@ -19,6 +19,11 @@ pub fn load(dir: &Path, track: &Path) -> Option<DynamicImage> {
     Some(limit_size(image))
 }
 
+/// Load cover art from an already-downloaded image file.
+pub fn load_path(path: &Path) -> Option<DynamicImage> {
+    image::open(path).ok().map(limit_size)
+}
+
 /// Fetch a thumbnail for an external URL with yt-dlp, caching it on disk.
 pub fn load_url(cache_dir: &Path, url: &str) -> Option<DynamicImage> {
     let url = crate::queue::external_url(url).unwrap_or(url);
@@ -28,7 +33,6 @@ pub fn load_url(cache_dir: &Path, url: &str) -> Option<DynamicImage> {
     if let Some(path) = cached_cover(&covers, &hash) {
         return image::open(path).ok().map(limit_size);
     }
-
     let base = covers.join(&hash);
     let status = Command::new("yt-dlp")
         .args([
@@ -76,7 +80,7 @@ fn cached_cover(dir: &Path, hash: &str) -> Option<PathBuf> {
         })
 }
 
-fn url_hash(url: &str) -> String {
+pub(crate) fn url_hash(url: &str) -> String {
     let mut hash = 0xcbf2_9ce4_8422_2325u64;
     for byte in url.as_bytes() {
         hash ^= u64::from(*byte);

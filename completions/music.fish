@@ -3,7 +3,7 @@ complete -c music -f
 
 set -l __music_commands \
     mount unmount status \
-    play add browse queue list open toggle pause resume next prev stop mute jump \
+    play add browse nts queue list open toggle pause resume next prev stop mute jump \
     volume seek shuffle repeat quit restart controls logs help
 
 complete -c music -n '__fish_use_subcommand' -a mount -d 'Mount the music library'
@@ -12,6 +12,7 @@ complete -c music -n '__fish_use_subcommand' -a status -d 'Show mount and playba
 complete -c music -n '__fish_use_subcommand' -a play -d 'Replace the queue with paths or URLs'
 complete -c music -n '__fish_use_subcommand' -a add -d 'Append local paths or URLs'
 complete -c music -n '__fish_use_subcommand' -a browse -d 'Pick artists/albums with fzf'
+complete -c music -n '__fish_use_subcommand' -a nts -d 'Play NTS live or Infinite Mixtapes'
 complete -c music -n '__fish_use_subcommand' -a queue -d 'List the current queue'
 complete -c music -n '__fish_use_subcommand' -a open -d 'Open the playing URL or reveal the file'
 complete -c music -n '__fish_use_subcommand' -a list -d 'List the current queue (alias)'

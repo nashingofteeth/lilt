@@ -68,6 +68,8 @@ fn fuzz_safe_cli_execution_never_panics() {
     .unwrap();
 
     // Commands that fail fast without starting mpv/rclone or touching a mount.
+    // `nts` is intentionally excluded: it fetches NTS metadata and can start
+    // playback, so it is covered by the CLI parse fuzz instead.
     let commands = [
         "status",
         "toggle",

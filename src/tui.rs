@@ -24,6 +24,7 @@ use crate::config::Config;
 use crate::cover;
 use crate::mount;
 use crate::mpv::{self, Mpv, PlaylistEntry, Repeat, Status};
+use crate::nts;
 use crate::player;
 use crate::queue;
 use crate::visualizer::Visualizer;
@@ -38,6 +39,7 @@ enum Focus {
 enum Pending {
     Play,
     Add,
+    Nts,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -223,6 +225,7 @@ impl App {
             match client.status() {
                 Ok(status) => {
                     self.status = status;
+                    nts::apply_status(&self.config, &mut self.status);
                     self.saw_mpv = true;
                     self.mpv_lost_at = None;
                     for event in client.drain_events() {
@@ -319,11 +322,13 @@ impl App {
             return;
         };
         let (sender, receiver) = mpsc::channel();
-        let cache_dir = self.config.cache_dir.clone();
+        let config = self.config.clone();
         match key.clone() {
             CoverKey::Url(url) => {
                 std::thread::spawn(move || {
-                    let _ = sender.send(cover::load_url(&cache_dir, &url));
+                    let image = nts::cover(&config, &url)
+                        .or_else(|| cover::load_url(&config.cache_dir, &url));
+                    let _ = sender.send(image);
                 });
             }
             CoverKey::Local(_) => {
@@ -424,6 +429,7 @@ impl App {
     }
 
     fn rebuild_items(&mut self) {
+        let nts = nts::load_current(&self.config);
         self.items = self
             .playlist
             .iter()
@@ -431,10 +437,17 @@ impl App {
             .map(|(index, entry)| {
                 let current = index as i64 == self.status.playlist_pos;
                 let marker = if current { "●" } else { " " };
-                let name = entry
-                    .title
-                    .clone()
-                    .unwrap_or_else(|| player::display_name(&entry.filename));
+                let name = if let Some(station) = nts
+                    .as_ref()
+                    .filter(|station| station.stream_url == entry.filename)
+                {
+                    station.title.clone()
+                } else {
+                    entry
+                        .title
+                        .clone()
+                        .unwrap_or_else(|| player::display_name(&entry.filename))
+                };
                 format!("{marker} {:>4}  {name}", index + 1)
             })
             .collect();
@@ -465,7 +478,14 @@ impl App {
         self.message = Some((message, Instant::now()));
     }
 
-    fn handle_key(&mut self, key: KeyEvent) {
+    fn handle_key(&mut self, mut key: KeyEvent) {
+        if key.modifiers.contains(KeyModifiers::SHIFT)
+            && let KeyCode::Char(character) = key.code
+            && character.is_ascii_lowercase()
+        {
+            key.code = KeyCode::Char(character.to_ascii_uppercase());
+        }
+
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
             if self.filter_editing {
                 self.clear_filter();
@@ -536,6 +556,10 @@ impl App {
             }
             KeyCode::Char('a') if !ctrl => {
                 self.pending = Some(Pending::Add);
+                return;
+            }
+            KeyCode::Char('N') if !ctrl => {
+                self.pending = Some(Pending::Nts);
                 return;
             }
             KeyCode::Char('v') if !ctrl => {
@@ -889,6 +913,14 @@ impl App {
                     if let Some(paths) = browse::pick(&self.config, false)? {
                         player::append_paths(&self.config, &paths)?;
                         Ok(Some("added to queue"))
+                    } else {
+                        Ok(None)
+                    }
+                }
+                Pending::Nts => {
+                    if let Some(target) = nts::pick()? {
+                        nts::play(&self.config, Some(&target))?;
+                        Ok(Some("playing NTS"))
                     } else {
                         Ok(None)
                     }
@@ -1303,7 +1335,7 @@ fn help_lines(focus: Focus, width: u16) -> Vec<Line<'static>> {
         match focus {
             Focus::NowPlaying => vec![
                 Line::from("space pause  j/k next/prev  h/l 10s  H/L 60s  -/+ vol"),
-                Line::from("s/r/m  x  o/b play  a add  v viz  Tab queue  / filter  f open  q/Q"),
+                Line::from("s/r/m  x  o/b play  a add  v viz  Tab  / filter  f open  N nts  q/Q"),
             ],
             Focus::Queue => vec![
                 Line::from("j/k move  Ctrl-d/u half  Ctrl-f/b page  Enter play"),
@@ -1316,7 +1348,7 @@ fn help_lines(focus: Focus, width: u16) -> Vec<Line<'static>> {
         match focus {
             Focus::NowPlaying => vec![
                 Line::from("space j/k h/l H/L -/+"),
-                Line::from("s r m x f o/b a v Tab / q/Q"),
+                Line::from("s r m x f o/b a v Tab N / q/Q"),
             ],
             Focus::Queue => vec![
                 Line::from("j/k ^d/^u ^f/^b Enter"),
@@ -1955,6 +1987,14 @@ mod key_tests {
 
         app.handle_key(key(KeyCode::Char('a')));
         assert_eq!(app.pending, Some(Pending::Add));
+        app.pending = None;
+
+        app.handle_key(key(KeyCode::Char('N')));
+        assert_eq!(app.pending, Some(Pending::Nts));
+        app.pending = None;
+
+        app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::SHIFT));
+        assert_eq!(app.pending, Some(Pending::Nts));
 
         let _ = std::fs::remove_dir_all(&base);
     }
