@@ -19,6 +19,7 @@ keys and MPRIS panels work too.
 
 - `mpv`, `rclone`
 - `fzf` for `music browse`
+- `yt-dlp` for YouTube playback and thumbnail covers
 - `tail` for `music logs -f`
 - optional: `mpv-mpris` for hardware media keys (Linux)
 
@@ -89,8 +90,9 @@ Library
   music status                   Mount state + now playing
 
 Playback
-  music play [PATH] [--shuffle]  Replace the queue. No PATH = whole library shuffled
-  music add PATH...              Append albums/artists/tracks
+  music play [SOURCE...] [--shuffle]
+                                 Replace the queue. No SOURCE = whole library shuffled
+  music add SOURCE...            Append local paths or URLs
   music browse                   Pick artists and albums with fzf
   music queue                    List the queue, current track marked
   music toggle | pause | resume
@@ -111,10 +113,27 @@ Playback
 track; `music list` is an alias. `music resume` and `music toggle` restart the
 queue from the beginning when playback has ended.
 
-`PATH` may be absolute, relative to the current directory, or relative to the
-music mount — so `music play "Brian Eno"` and
+A local `SOURCE` may be absolute, relative to the current directory, or relative
+to the music mount — so `music play "Brian Eno"` and
 `music play "Brian Eno/Ambient 1"` both work. Matching falls back to a
 case-insensitive search under the mount.
+
+`SOURCE` may also be any URL mpv supports, and `play` accepts multiple sources:
+
+```sh
+music play 'https://www.youtube.com/watch?v=...'
+music play 'https://www.youtube.com/playlist?list=...'
+music add 'https://example.com/stream.mp3' 'https://youtu.be/...'
+```
+
+YouTube playback is audio-only (`--ytdl-format=bestaudio/best`), and playlist
+URLs expand into separate queue entries. URL-only playback does not require the
+rclone mount. Cover art for URL sources is the thumbnail fetched with `yt-dlp`
+and cached under `~/.cache/music/covers`; playlist entries get their own
+thumbnail.
+
+When mpv rejects a URL or yt-dlp fails, `music play` exits non-zero and prints
+the mpv error plus relevant lines from `mpv.log`.
 
 `browse` returns as soon as you make a selection: it hands the queue to the
 detached mpv daemon and exits, so the picker window closes immediately.
@@ -132,8 +151,9 @@ is cyan and the other is dim. If the queue is empty when the panel opens, it
 automatically runs the add picker first.
 
 The Now Playing pane shows cover art when the terminal is at least 64 columns
-wide and 20 rows tall. Embedded art is preferred; otherwise a conventional image
-next to the track (`cover`, `folder`, `front`, `album`, `artwork`, or `art` with
+wide and 20 rows tall. For URL sources it uses the cached `yt-dlp` thumbnail.
+For local files, embedded art is preferred; otherwise a conventional image next
+to the track (`cover`, `folder`, `front`, `album`, `artwork`, or `art` with
 `.jpg`, `.jpeg`, `.png`, or `.webp`) is used. Kitty, Sixel, and iTerm2 terminals
 get full-resolution graphics; other terminals fall back to Unicode halfblocks.
 Loading happens on a background thread so tracks on the rclone mount do not

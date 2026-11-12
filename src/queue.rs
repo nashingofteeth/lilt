@@ -20,9 +20,39 @@ pub fn is_audio(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Build an m3u from explicit files and directories (audio allowlist only).
-/// Returns the playlist path and the number of entries.
-pub fn build_playlist(config: &Config, paths: &[PathBuf]) -> Result<(PathBuf, usize)> {
+/// A queue input: a local file/directory or an external URL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Input {
+    Local(PathBuf),
+    Url(String),
+}
+
+/// True when the input has an explicit URL scheme such as `https://`.
+pub fn is_url(input: &str) -> bool {
+    let Some((scheme, rest)) = input.split_once("://") else {
+        return false;
+    };
+    !rest.is_empty()
+        && scheme
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_alphabetic())
+        && scheme.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '.')
+        })
+}
+
+/// Resolve a CLI input to either a URL or a local path.
+pub fn resolve_input(config: &Config, input: &str) -> Result<Input> {
+    if is_url(input) {
+        Ok(Input::Url(input.to_string()))
+    } else {
+        Ok(Input::Local(resolve_path(config, input)?))
+    }
+}
+
+/// Build an m3u from local paths and external URLs.
+pub fn build_input_playlist(config: &Config, inputs: &[Input]) -> Result<(PathBuf, usize)> {
     config.ensure_dirs()?;
     let path = config.runtime_dir.join(format!(
         "queue-{}-{}.m3u",
@@ -37,34 +67,45 @@ pub fn build_playlist(config: &Config, paths: &[PathBuf]) -> Result<(PathBuf, us
     writeln!(playlist, "#EXTM3U")?;
 
     let mut count = 0usize;
-    for input in paths {
-        if input.is_dir() {
-            let mut files: Vec<PathBuf> = WalkDir::new(input)
-                .follow_links(false)
-                .into_iter()
-                .filter_entry(|entry| {
-                    entry.depth() == 0 || !entry.file_name().to_string_lossy().starts_with('.')
-                })
-                .filter_map(Result::ok)
-                .filter(|entry| entry.file_type().is_file() && is_audio(entry.path()))
-                .map(|entry| entry.into_path())
-                .collect();
-            files.sort();
-            for audio in files {
-                writeln!(playlist, "{}", audio.display())?;
+    for input in inputs {
+        match input {
+            Input::Local(path) => append_local(&mut playlist, path, &mut count)?,
+            Input::Url(url) => {
+                writeln!(playlist, "{url}")?;
                 count += 1;
             }
-        } else if input.is_file() {
-            writeln!(playlist, "{}", input.display())?;
-            count += 1;
         }
     }
 
     if count == 0 {
         let _ = std::fs::remove_file(&path);
-        bail!("no audio files found in the selected path(s)");
+        bail!("no audio files or URLs found");
     }
     Ok((path, count))
+}
+
+fn append_local(playlist: &mut std::fs::File, input: &Path, count: &mut usize) -> Result<()> {
+    if input.is_dir() {
+        let mut files: Vec<PathBuf> = WalkDir::new(input)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(|entry| {
+                entry.depth() == 0 || !entry.file_name().to_string_lossy().starts_with('.')
+            })
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_type().is_file() && is_audio(entry.path()))
+            .map(|entry| entry.into_path())
+            .collect();
+        files.sort();
+        for audio in files {
+            writeln!(playlist, "{}", audio.display())?;
+            *count += 1;
+        }
+    } else if input.is_file() {
+        writeln!(playlist, "{}", input.display())?;
+        *count += 1;
+    }
+    Ok(())
 }
 
 /// Resolve a CLI path: absolute/relative to cwd, relative to the music dir,
@@ -107,6 +148,36 @@ pub fn resolve_path(config: &Config, input: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recognises_explicit_url_schemes() {
+        assert!(is_url("https://example.com/audio.mp3"));
+        assert!(is_url("ytdl://https://www.youtube.com/watch?v=abc"));
+        assert!(!is_url("https://"));
+        assert!(!is_url("Artist/Album/Track.flac"));
+        assert!(!is_url("C:/Music/track.flac"));
+    }
+
+    #[test]
+    fn builds_mixed_local_and_url_playlist() {
+        let base = crate::test_support::unique_base("queue-url");
+        let root = base.join("music");
+        std::fs::create_dir_all(&root).unwrap();
+        let config = crate::test_support::test_config(root.clone(), &base);
+        let (playlist, count) = build_input_playlist(
+            &config,
+            &[
+                Input::Url("https://example.com/stream".to_string()),
+                Input::Local(root),
+            ],
+        )
+        .expect("url playlist");
+        assert_eq!(count, 1);
+        let text = std::fs::read_to_string(&playlist).unwrap();
+        assert!(text.contains("https://example.com/stream"));
+        let _ = std::fs::remove_file(&playlist);
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn recognises_audio_extensions_case_insensitively() {
@@ -179,7 +250,7 @@ mod fuzz_tests {
             fs::write(hidden.join("hidden.flac"), b"x").unwrap();
 
             let config = test_config(root.clone(), &base);
-            let (playlist, count) = build_playlist(&config, std::slice::from_ref(&root))
+            let (playlist, count) = build_input_playlist(&config, &[Input::Local(root.clone())])
                 .expect("valid audio file should produce a playlist");
             assert!(count >= 1);
 

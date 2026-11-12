@@ -15,6 +15,7 @@ pub struct Mpv {
     writer: UnixStream,
     reader: BufReader<UnixStream>,
     next_id: u64,
+    events: Vec<Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -62,6 +63,7 @@ impl Mpv {
             writer: stream,
             reader,
             next_id: 0,
+            events: Vec::new(),
         })
     }
 
@@ -82,6 +84,13 @@ impl Mpv {
                 Ok(value) => value,
                 Err(_) => continue,
             };
+            if reply.get("event").is_some() {
+                if self.events.len() >= 256 {
+                    self.events.remove(0);
+                }
+                self.events.push(reply);
+                continue;
+            }
             if reply.get("request_id").and_then(Value::as_u64) != Some(id) {
                 continue;
             }
@@ -94,6 +103,10 @@ impl Mpv {
             }
             return Ok(reply.get("data").cloned());
         }
+    }
+
+    pub fn drain_events(&mut self) -> Vec<Value> {
+        std::mem::take(&mut self.events)
     }
 
     pub fn command(&mut self, command: &[&str]) -> Result<()> {
@@ -139,6 +152,7 @@ impl Mpv {
         let mut artist = String::new();
         let mut album_artist = String::new();
         let mut album = String::new();
+        let mut uploader = String::new();
         let mut has_title_tag = false;
         if let Some(Value::Object(metadata)) = self.try_get("metadata")? {
             for (key, value) in metadata {
@@ -148,11 +162,15 @@ impl Mpv {
                     "artist" => artist = text.to_string(),
                     "album_artist" | "albumartist" => album_artist = text.to_string(),
                     "album" => album = text.to_string(),
+                    "uploader" | "channel" => uploader = text.to_string(),
                     _ => {}
                 }
             }
         }
-        let artist = display_artist(&artist, &album_artist);
+        let mut artist = display_artist(&artist, &album_artist);
+        if artist.is_empty() {
+            artist = uploader.trim().to_string();
+        }
         let path = self
             .try_get("path")?
             .and_then(|value| value.as_str().map(str::to_string))
@@ -292,7 +310,7 @@ pub fn args(config: &Config) -> Vec<String> {
         "--idle=yes".to_string(),
         "--no-video".to_string(),
         "--no-terminal".to_string(),
-        "--really-quiet".to_string(),
+        format!("--log-file={}", config.mpv_log.display()),
         format!("--input-ipc-server={}", config.socket.display()),
         "--directory-mode=recursive".to_string(),
         "--directory-filter-types=audio".to_string(),
@@ -301,6 +319,7 @@ pub fn args(config: &Config) -> Vec<String> {
         "--audio-buffer=0.5".to_string(),
         "--autoload-files=no".to_string(),
         "--audio-display=no".to_string(),
+        "--ytdl-format=bestaudio/best".to_string(),
         format!("--audio-client-name={AUDIO_CLIENT_NAME}"),
         "--no-resume-playback".to_string(),
         "--save-position-on-quit=no".to_string(),
@@ -341,12 +360,10 @@ pub fn ensure_daemon(config: &Config) -> Result<()> {
         .stderr(Stdio::null())
         .status();
 
-    let log = File::create(&config.mpv_log)
-        .with_context(|| format!("creating {}", config.mpv_log.display()))?;
     let mut command = Command::new("mpv");
     command.args(args(config));
-    command.stdout(Stdio::from(log.try_clone()?));
-    command.stderr(Stdio::from(log));
+    command.stdout(Stdio::null());
+    command.stderr(Stdio::null());
     // New session: survive the terminal that launched us.
     unsafe {
         command.pre_exec(|| {
@@ -555,6 +572,47 @@ mod status_fuzz_tests {
                 Value::Object(object)
             }
         }
+    }
+
+    #[test]
+    fn buffers_playback_events() {
+        let base = unique_base("mpv-events");
+        let path = base.join("mpv.sock");
+        let listener = UnixListener::bind(&path).unwrap();
+
+        let handle = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut writer = stream;
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let request: Value = serde_json::from_str(&line).unwrap();
+            let id = request.get("request_id").and_then(Value::as_u64).unwrap();
+            let _ = writeln!(
+                writer,
+                "{}",
+                json!({"event": "end-file", "reason": "error", "file_error": "boom"})
+            );
+            let _ = writeln!(
+                writer,
+                "{}",
+                json!({"request_id": id, "error": "success", "data": true})
+            );
+        });
+
+        let mut client = Mpv::connect(&path).unwrap();
+        assert_eq!(
+            client
+                .request(vec![json!("get_property"), json!("x")])
+                .unwrap(),
+            Some(Value::Bool(true))
+        );
+        let events = client.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["file_error"], "boom");
+        assert!(client.drain_events().is_empty());
+        handle.join().unwrap();
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

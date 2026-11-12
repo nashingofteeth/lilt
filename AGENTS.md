@@ -45,8 +45,8 @@ Current playback/queue mapping:
 
 | Action | CLI | TUI |
 | --- | --- | --- |
-| play/replace queue | `play [PATH]` | `o` |
-| add to queue | `add PATH...` | `a` |
+| play/replace queue | `play SOURCE...` | `o` (local picker) |
+| add to queue | `add SOURCE...` | `a` (local picker) |
 | list queue | `queue` (alias `list`) | Queue pane |
 | toggle/pause/resume | `toggle`, `pause`, `resume` | `space` |
 | next/previous | `next`, `prev` | `n`, `p`, `j`, `k` |
@@ -70,6 +70,15 @@ Exemptions:
 
 The TUI footer hints are the canonical in-app key reference; there is no help
 overlay. Keep them short, accurate, and in sync with the README.
+
+## External sources
+
+- `queue::Input` distinguishes local paths from URLs; URL-only playback must not
+  require the rclone mount.
+- Keep YouTube audio-only with `--ytdl-format=bestaudio/best`.
+- URL covers come from `yt-dlp` in `cover::load_url` and are cached under
+  `cache_dir/covers`; playlist entries get per-video thumbnails.
+- Surface mpv playback failures from `end-file` events and the mpv log.
 
 ## Style
 

@@ -2,6 +2,7 @@ use image::DynamicImage;
 use lofty::file::TaggedFileExt;
 use lofty::probe::Probe;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 /// Keep decoded art small enough to encode quickly while still looking sharp
 /// on high-DPI terminal graphics protocols.
@@ -16,6 +17,71 @@ pub fn load(dir: &Path, track: &Path) -> Option<DynamicImage> {
     let bytes = embedded_picture(track).or_else(|| folder_picture(dir))?;
     let image = image::load_from_memory(&bytes).ok()?;
     Some(limit_size(image))
+}
+
+/// Fetch a thumbnail for an external URL with yt-dlp, caching it on disk.
+pub fn load_url(cache_dir: &Path, url: &str) -> Option<DynamicImage> {
+    let covers = cache_dir.join("covers");
+    std::fs::create_dir_all(&covers).ok()?;
+    let hash = url_hash(url);
+    if let Some(path) = cached_cover(&covers, &hash) {
+        return image::open(path).ok().map(limit_size);
+    }
+
+    let base = covers.join(&hash);
+    let status = Command::new("yt-dlp")
+        .args([
+            "--no-playlist",
+            "--playlist-items",
+            "1",
+            "--skip-download",
+            "--write-thumbnail",
+            "--socket-timeout",
+            "10",
+            "--retries",
+            "1",
+            "--output",
+        ])
+        .arg(format!("{}.%(ext)s", base.display()))
+        .arg(url)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .ok()?;
+    if !status.success() {
+        return None;
+    }
+
+    image::open(cached_cover(&covers, &hash)?)
+        .ok()
+        .map(limit_size)
+}
+
+fn cached_cover(dir: &Path, hash: &str) -> Option<PathBuf> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_stem().and_then(|stem| stem.to_str()) == Some(hash)
+                && path
+                    .extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| {
+                        IMAGE_EXTENSIONS
+                            .iter()
+                            .any(|known| known.eq_ignore_ascii_case(extension))
+                    })
+        })
+}
+
+fn url_hash(url: &str) -> String {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in url.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
 }
 
 fn embedded_picture(track: &Path) -> Option<Vec<u8>> {
@@ -94,6 +160,36 @@ mod tests {
         assert_eq!(path.file_name().unwrap(), "cover.png");
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn uses_cached_url_thumbnail() {
+        let base = unique_base("cover-url");
+        let cache = base.join("cache");
+        let covers = cache.join("covers");
+        std::fs::create_dir_all(&covers).unwrap();
+        let url = "https://example.com/video";
+        let image = image::RgbImage::from_pixel(8, 8, image::Rgb([10, 20, 30]));
+        image
+            .save(covers.join(format!("{}.png", url_hash(url))))
+            .expect("write cached thumbnail");
+
+        let cover = load_url(&cache, url).expect("cached thumbnail");
+        assert_eq!((cover.width(), cover.height()), (8, 8));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn url_hash_is_stable_and_distinct() {
+        assert_eq!(
+            url_hash("https://www.youtube.com/watch?v=abc"),
+            url_hash("https://www.youtube.com/watch?v=abc")
+        );
+        assert_ne!(
+            url_hash("https://www.youtube.com/watch?v=abc"),
+            url_hash("https://www.youtube.com/watch?v=def")
+        );
     }
 
     #[test]

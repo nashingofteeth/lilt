@@ -28,6 +28,9 @@ pub fn format_time(value: Option<f64>) -> String {
 }
 
 pub fn display_name(filename: &str) -> String {
+    if let Some((_, rest)) = filename.split_once("://") {
+        return rest.to_string();
+    }
     let stem = Path::new(filename)
         .file_stem()
         .and_then(|name| name.to_str())
@@ -134,18 +137,40 @@ pub fn queue(config: &Config) -> Result<()> {
     Ok(())
 }
 
-pub fn play(config: &Config, path: Option<&str>, shuffle: bool) -> Result<()> {
-    match path {
-        Some(path) => {
-            let resolved = queue::resolve_path(config, path)?;
-            load_replace(config, &[resolved], shuffle)?;
+pub fn play(config: &Config, inputs: &[String], shuffle: bool) -> Result<()> {
+    if inputs.is_empty() {
+        load_directory(config, &config.music_dir, true)?;
+        if let Ok(mut client) = Mpv::connect(&config.socket) {
+            wait_playing(&mut client);
         }
-        None => load_directory(config, &config.music_dir, true)?,
+        return status(config);
     }
 
-    if let Ok(mut client) = Mpv::connect(&config.socket) {
+    let sources = inputs
+        .iter()
+        .map(|input| queue::resolve_input(config, input))
+        .collect::<Result<Vec<_>>>()?;
+    let has_url = sources
+        .iter()
+        .any(|input| matches!(input, queue::Input::Url(_)));
+    let log_start = if mpv::alive(config) {
+        log_len(config)
+    } else {
+        0
+    };
+    let mut client = load_inputs(config, &sources, shuffle)?;
+
+    if has_url {
+        if let Err(error) = wait_for_loaded(&mut client, Duration::from_secs(20)) {
+            if let Some(detail) = log_error(config, log_start) {
+                bail!("{error}\n{detail}");
+            }
+            return Err(error);
+        }
+    } else {
         wait_playing(&mut client);
     }
+
     status(config)
 }
 
@@ -170,11 +195,21 @@ pub fn load_directory(config: &Config, path: &std::path::Path, shuffle: bool) ->
 }
 
 pub fn load_replace(config: &Config, paths: &[PathBuf], shuffle: bool) -> Result<()> {
-    mount::ensure_mount(config)?;
+    let inputs: Vec<queue::Input> = paths.iter().cloned().map(queue::Input::Local).collect();
+    load_inputs(config, &inputs, shuffle).map(|_| ())
+}
+
+fn load_inputs(config: &Config, inputs: &[queue::Input], shuffle: bool) -> Result<Mpv> {
+    if inputs
+        .iter()
+        .any(|input| matches!(input, queue::Input::Local(_)))
+    {
+        mount::ensure_mount(config)?;
+    }
     mpv::ensure_daemon(config)?;
 
-    let (playlist, _count) = queue::build_playlist(config, paths)?;
-    let result = (|| -> Result<()> {
+    let (playlist, _count) = queue::build_input_playlist(config, inputs)?;
+    let result = (|| -> Result<Mpv> {
         let mut client = Mpv::connect(&config.socket)?;
         set_bool(&mut client, "shuffle", false)?;
         client.command_values(vec![
@@ -186,7 +221,7 @@ pub fn load_replace(config: &Config, paths: &[PathBuf], shuffle: bool) -> Result
             set_bool(&mut client, "shuffle", true)?;
         }
         set_bool(&mut client, "pause", false)?;
-        Ok(())
+        Ok(client)
     })();
     let _ = std::fs::remove_file(&playlist);
     result
@@ -194,26 +229,36 @@ pub fn load_replace(config: &Config, paths: &[PathBuf], shuffle: bool) -> Result
 
 pub fn add(config: &Config, inputs: &[String]) -> Result<()> {
     if inputs.is_empty() {
-        bail!("usage: music add PATH...");
+        bail!("usage: music add PATH|URL...");
     }
-    let paths = inputs
+    let sources = inputs
         .iter()
-        .map(|input| queue::resolve_path(config, input))
+        .map(|input| queue::resolve_input(config, input))
         .collect::<Result<Vec<_>>>()?;
-    append_paths(config, &paths)?;
-    println!("queued {} path(s)", inputs.len());
+    append_inputs(config, &sources)?;
+    println!("queued {} source(s)", sources.len());
     Ok(())
 }
 
 /// Append already-resolved paths to the queue (used by `add` and the TUI).
 pub fn append_paths(config: &Config, paths: &[PathBuf]) -> Result<()> {
-    if paths.is_empty() {
+    let inputs: Vec<queue::Input> = paths.iter().cloned().map(queue::Input::Local).collect();
+    append_inputs(config, &inputs)
+}
+
+fn append_inputs(config: &Config, inputs: &[queue::Input]) -> Result<()> {
+    if inputs.is_empty() {
         bail!("nothing to add");
     }
-    mount::ensure_mount(config)?;
+    if inputs
+        .iter()
+        .any(|input| matches!(input, queue::Input::Local(_)))
+    {
+        mount::ensure_mount(config)?;
+    }
     mpv::ensure_daemon(config)?;
 
-    let (playlist, _count) = queue::build_playlist(config, paths)?;
+    let (playlist, _count) = queue::build_input_playlist(config, inputs)?;
     let result = (|| -> Result<()> {
         let mut client = Mpv::connect(&config.socket)?;
         let status = client.status()?;
@@ -234,6 +279,66 @@ pub fn append_paths(config: &Config, paths: &[PathBuf]) -> Result<()> {
     })();
     let _ = std::fs::remove_file(&playlist);
     result
+}
+
+fn wait_for_loaded(client: &mut Mpv, timeout: Duration) -> Result<()> {
+    let start = Instant::now();
+    loop {
+        let status = client.status().ok();
+        for event in client.drain_events() {
+            let name = event
+                .get("event")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            if name == "file-loaded" {
+                return Ok(());
+            }
+            if name == "end-file"
+                && event.get("reason").and_then(|value| value.as_str()) == Some("error")
+            {
+                let detail = event
+                    .get("file_error")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("playback failed");
+                bail!("mpv: {detail}");
+            }
+        }
+
+        if let Some(status) = status
+            && !status.idle
+            && status.duration.is_some()
+        {
+            return Ok(());
+        }
+        if start.elapsed() >= timeout {
+            bail!("timed out waiting for mpv to load source (see music logs)");
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn log_len(config: &Config) -> u64 {
+    std::fs::metadata(&config.mpv_log)
+        .map(|metadata| metadata.len())
+        .unwrap_or(0)
+}
+
+fn log_error(config: &Config, start: u64) -> Option<String> {
+    let bytes = std::fs::read(&config.mpv_log).ok()?;
+    let start = usize::try_from(start).ok()?.min(bytes.len());
+    let text = String::from_utf8_lossy(&bytes[start..]);
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| {
+            !line.is_empty()
+                && (line.contains("ERROR")
+                    || line.to_ascii_lowercase().contains("error")
+                    || line.to_ascii_lowercase().contains("failed"))
+        })
+        .collect();
+    let tail = lines[lines.len().saturating_sub(5)..].join("\n");
+    (!tail.is_empty()).then(|| format!("mpv log:\n{tail}"))
 }
 
 fn wait_playing(client: &mut Mpv) {

@@ -25,6 +25,7 @@ use crate::cover;
 use crate::mount;
 use crate::mpv::{self, Mpv, PlaylistEntry, Repeat, Status};
 use crate::player;
+use crate::queue;
 use crate::visualizer::Visualizer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +38,12 @@ enum Focus {
 enum Pending {
     Play,
     Add,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CoverKey {
+    Local(PathBuf),
+    Url(String),
 }
 
 pub fn run(config: &Config) -> Result<()> {
@@ -116,8 +123,8 @@ struct App {
     pending_g: Option<Instant>,
     number_buffer: String,
     picker: Picker,
-    cover_dir: Option<PathBuf>,
-    cover_pending: Option<(PathBuf, Receiver<Option<DynamicImage>>)>,
+    cover_key: Option<CoverKey>,
+    cover_pending: Option<(CoverKey, Receiver<Option<DynamicImage>>)>,
     cover_aspect: Option<f32>,
     cover_protocol: Option<StatefulProtocol>,
     visualizer: Option<Visualizer>,
@@ -151,7 +158,7 @@ impl App {
             pending_g: None,
             number_buffer: String::new(),
             picker: Picker::halfblocks(),
-            cover_dir: None,
+            cover_key: None,
             cover_pending: None,
             cover_aspect: None,
             cover_protocol: None,
@@ -219,6 +226,7 @@ impl App {
 
         let previous_pos = self.status.playlist_pos;
         let previous_count = self.status.playlist_count;
+        let mut playback_error = None;
 
         if let Some(client) = self.mpv.as_mut() {
             match client.status() {
@@ -226,6 +234,17 @@ impl App {
                     self.status = status;
                     self.saw_mpv = true;
                     self.mpv_lost_at = None;
+                    for event in client.drain_events() {
+                        if event.get("event").and_then(|value| value.as_str()) == Some("end-file")
+                            && event.get("reason").and_then(|value| value.as_str()) == Some("error")
+                        {
+                            let detail = event
+                                .get("file_error")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or("playback failed");
+                            playback_error = Some(detail.to_string());
+                        }
+                    }
                 }
                 Err(_) => {
                     self.mpv = None;
@@ -240,6 +259,10 @@ impl App {
             if self.saw_mpv {
                 self.mpv_lost_at.get_or_insert_with(Instant::now);
             }
+        }
+
+        if let Some(error) = playback_error {
+            self.show_message(format!("mpv: {error}"));
         }
 
         if self.playlist.is_empty()
@@ -257,10 +280,10 @@ impl App {
     }
 
     fn sync_cover(&mut self) {
-        if let Some((dir, receiver)) = self.cover_pending.take() {
+        if let Some((key, receiver)) = self.cover_pending.take() {
             match receiver.try_recv() {
                 Ok(image) => {
-                    if self.cover_dir.as_ref() == Some(&dir) {
+                    if self.cover_key.as_ref() == Some(&key) {
                         self.cover_aspect = image.as_ref().and_then(|image| {
                             (image.height() > 0)
                                 .then(|| image.width() as f32 / image.height() as f32)
@@ -270,47 +293,71 @@ impl App {
                     }
                 }
                 Err(TryRecvError::Empty) => {
-                    self.cover_pending = Some((dir, receiver));
+                    self.cover_pending = Some((key, receiver));
                 }
                 Err(TryRecvError::Disconnected) => {}
             }
         }
 
-        let track = if self.status.path.is_empty() {
-            None
+        let path = self.status.path.clone();
+        let (key, local) = if path.is_empty() {
+            (None, None)
+        } else if queue::is_url(&path) {
+            (Some(CoverKey::Url(path)), None)
         } else {
-            Some(PathBuf::from(&self.status.path))
+            let track = PathBuf::from(path);
+            let dir = track.parent().map(Path::to_path_buf);
+            (
+                dir.clone().map(CoverKey::Local),
+                dir.map(|dir| (dir, track)),
+            )
         };
-        let dir = track
-            .as_ref()
-            .and_then(|path| path.parent().map(Path::to_path_buf));
 
-        if self.cover_dir == dir {
+        if self.cover_key == key {
             return;
         }
 
-        self.cover_dir = dir.clone();
+        self.cover_key = key.clone();
         self.cover_pending = None;
         self.cover_aspect = None;
         self.cover_protocol = None;
 
-        let (Some(dir), Some(track)) = (dir, track) else {
+        let Some(key) = key else {
             return;
         };
-        if !track.is_file() {
-            return;
-        }
-
         let (sender, receiver) = mpsc::channel();
-        let pending_dir = dir.clone();
-        std::thread::spawn(move || {
-            let _ = sender.send(cover::load(&dir, &track));
-        });
-        self.cover_pending = Some((pending_dir, receiver));
+        let cache_dir = self.config.cache_dir.clone();
+        match key.clone() {
+            CoverKey::Url(url) => {
+                std::thread::spawn(move || {
+                    let _ = sender.send(cover::load_url(&cache_dir, &url));
+                });
+            }
+            CoverKey::Local(_) => {
+                let Some((dir, track)) = local else {
+                    return;
+                };
+                if !track.is_file() {
+                    return;
+                }
+                std::thread::spawn(move || {
+                    let _ = sender.send(cover::load(&dir, &track));
+                });
+            }
+        }
+        self.cover_pending = Some((key, receiver));
     }
 
     fn cover_slot(&self) -> bool {
-        self.cover_dir.is_some() && !self.status.path.is_empty()
+        self.cover_key.is_some() && !self.status.path.is_empty()
+    }
+
+    fn external_only_queue(&self) -> bool {
+        !self.playlist.is_empty()
+            && self
+                .playlist
+                .iter()
+                .all(|entry| queue::is_url(&entry.filename))
     }
 
     fn cover_loading(&self) -> bool {
@@ -1010,10 +1057,13 @@ impl App {
         ])
         .split(text_block);
 
-        let path_fallback = !self.status.has_title_tag && !self.status.path.is_empty();
+        let external = queue::is_url(&self.status.path);
+        let path_fallback = !external && !self.status.has_title_tag && !self.status.path.is_empty();
         let context = if self.status.artist.is_empty() && self.status.album.is_empty() {
             if path_fallback {
                 "file".to_string()
+            } else if external {
+                "stream".to_string()
             } else {
                 "mpv".to_string()
             }
@@ -1237,7 +1287,7 @@ impl App {
             self.message = None;
         }
 
-        if !self.mounted {
+        if !self.mounted && !self.external_only_queue() {
             frame.render_widget(
                 Paragraph::new("library not mounted — run `music mount`")
                     .style(Style::default().fg(Color::Yellow)),
@@ -1696,7 +1746,7 @@ mod layout_fuzz_tests {
                 },
                 number_buffer: rng.string(6),
                 picker: Picker::halfblocks(),
-                cover_dir: None,
+                cover_key: None,
                 cover_pending: None,
                 cover_aspect: None,
                 cover_protocol: None,
@@ -1746,10 +1796,10 @@ mod cover_placeholder_tests {
         let path = music.join("song.flac").display().to_string();
         app.status.path = path.clone();
         app.status.media_title = "song.flac".to_string();
-        app.cover_dir = Some(music.clone());
+        app.cover_key = Some(CoverKey::Local(music.clone()));
 
         let (sender, receiver) = mpsc::channel();
-        app.cover_pending = Some((music, receiver));
+        app.cover_pending = Some((CoverKey::Local(music), receiver));
         let text = rendered_text(&mut app);
         assert!(text.contains("♪"));
         assert!(text.contains("loading…"));
@@ -1773,6 +1823,24 @@ mod cover_placeholder_tests {
         assert_eq!(cover_area(area, Some(1.0), font), Rect::new(6, 0, 28, 14));
         assert_eq!(cover_area(area, Some(2.0), font), Rect::new(0, 2, 40, 10));
         assert_eq!(cover_area(area, None, font), Rect::new(6, 0, 28, 14));
+    }
+
+    #[test]
+    fn external_url_uses_media_title_instead_of_path() {
+        let base = unique_base("tui-external");
+        let music = base.join("Music");
+        std::fs::create_dir_all(&music).unwrap();
+        let config = test_config(music, &base);
+        let mut app = App::new(config);
+        app.status.path = "https://www.youtube.com/watch?v=abc".to_string();
+        app.status.media_title = "Video Title".to_string();
+        app.status.has_title_tag = false;
+
+        let text = rendered_text(&mut app);
+        assert!(text.contains("Video Title"));
+        assert!(!text.contains("https://www.youtube.com/watch?v=abc"));
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

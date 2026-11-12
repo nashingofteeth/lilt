@@ -34,13 +34,14 @@ enum Command {
     Unmount,
     /// Show mount, mpv, and now-playing state
     Status,
-    /// Replace the queue with PATH (whole library if omitted)
+    /// Replace the queue with SOURCE (local path or URL; whole library if omitted)
     Play {
-        path: Option<String>,
+        #[arg(value_name = "SOURCE", num_args = 0..)]
+        paths: Vec<String>,
         #[arg(long, short = 's')]
         shuffle: bool,
     },
-    /// Append artists/albums/tracks to the queue
+    /// Append local paths or URLs to the queue
     Add {
         #[arg(required = true, num_args = 1..)]
         paths: Vec<String>,
@@ -122,7 +123,7 @@ fn run() -> Result<()> {
         Command::Mount => mount::mount_foreground(&config),
         Command::Unmount => mount::unmount(&config),
         Command::Status => player::status(&config),
-        Command::Play { path, shuffle } => player::play(&config, path.as_deref(), shuffle),
+        Command::Play { paths, shuffle } => player::play(&config, &paths, shuffle),
         Command::Add { paths } => player::add(&config, &paths),
         Command::Browse => browse::browse(&config),
         Command::Queue => player::queue(&config),
