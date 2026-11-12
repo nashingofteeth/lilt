@@ -93,10 +93,10 @@ Library
 
 Playback
   lilt play [SOURCE...] [--shuffle]
-                                 Replace the queue. No SOURCE = whole library shuffled
-  lilt add SOURCE...            Append local paths or URLs
-  lilt browse                   Pick artists and albums with fzf
-  lilt nts [1|2|list|ALIAS]     Play NTS live or an Infinite Mixtape
+                                 Replace the queue with paths, URLs, or NTS
+                                 stations. No SOURCE = whole library shuffled
+  lilt add SOURCE...            Append local paths, URLs, or NTS stations
+  lilt browse                   Pick artists, albums, or NTS with fzf
   lilt queue                    List the queue, current track marked
   lilt open                     Open the playing URL or reveal the local file
   lilt toggle | pause | resume
@@ -137,14 +137,18 @@ lilt add 'https://example.com/stream.mp3' 'https://youtu.be/...'
 
 ### NTS Radio
 
-`lilt nts` plays NTS 1, `lilt nts 2` plays NTS 2, and `lilt nts list` lists the
-live channels and all Infinite Mixtapes. `lilt nts slow-focus` (or a mixtape
-title) starts one. In the control panel, `N` opens the same picker.
+`lilt play slow-focus` or `lilt add slow-focus poolside` resolves mixtape
+aliases and titles directly. The normal `o` and `a` pickers include an
+`[NTS Radio]` entry. It opens a
+multi-select list of NTS 1, NTS 2, and every Infinite Mixtape. Select one or
+several and they are queued like any other source; switching tracks updates the
+title, artist/album, and cover without restarting the panel.
 
 NTS metadata (current show, mixtape title/subtitle) and artwork come from the
 public NTS API via `curl`, cached under `~/.cache/lilt`, and shown in the Now
 Playing pane and cover. Live streams are URL-only, so the rclone mount is not
-required.
+required. When the library is unmounted, the pickers still offer NTS plus a
+`[local library]` entry that mounts on demand.
 
 YouTube playback is audio-only (`--ytdl-format=bestaudio/best`), and playlist
 URLs expand into separate queue entries. URL-only playback does not require the
@@ -196,9 +200,8 @@ open.
 | `H` / `L` | seek −60s / +60s |
 | `-` / `+` | volume −5 / +5 |
 | `s` / `r` / `m` | shuffle / repeat / mute |
-| `o` (or `b`) | browse library → play now (replace queue) |
-| `a` | browse library → add to queue |
-| `N` | NTS Radio live/mixtape picker |
+| `o` (or `b`) | browse library or NTS → play now (replace queue) |
+| `a` | browse library or NTS → add to queue |
 | `v` | visualizer on/off |
 | `f` | open the playing URL or reveal the local file |
 | `Tab` | switch focus (Now Playing ↔ Queue) |

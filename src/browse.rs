@@ -5,55 +5,79 @@ use std::process::{Command, Stdio};
 
 use crate::config::Config;
 use crate::mount;
+use crate::nts;
 use crate::player;
+
+const NTS_ENTRY: &str = "[NTS Radio]";
+const LOCAL_ENTRY: &str = "[local library]";
+const SHUFFLE_ENTRY: &str = "[shuffle all]";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Selection {
+    Local(Vec<PathBuf>),
+    Nts(Vec<String>),
+}
 
 pub fn browse(config: &Config) -> Result<()> {
     match pick(config, true)? {
-        Some(paths) => play_paths(config, &paths),
+        Some(Selection::Local(paths)) => play_paths(config, &paths),
+        Some(Selection::Nts(targets)) => nts::play_many(config, &targets),
         None => Ok(()),
     }
 }
 
-/// Picker shared by the CLI and the TUI. Returns None if the user cancels.
+/// Picker shared by the CLI and the TUI. NTS is always available; the local
+/// library is listed when mounted, or mounted on demand via its entry.
 /// `include_all` adds the "[shuffle all]" entry (play mode, not add mode).
-pub fn pick(config: &Config, include_all: bool) -> Result<Option<Vec<PathBuf>>> {
-    mount::ensure_mount(config)?;
-
-    let artists = list_dirs(&config.music_dir)?;
-    if artists.is_empty() {
-        bail!("no artists found under {}", config.music_dir.display());
-    }
-
-    let mut artist_choices = Vec::new();
+pub fn pick(config: &Config, include_all: bool) -> Result<Option<Selection>> {
+    let mut choices = vec![NTS_ENTRY.to_string()];
     if include_all {
-        artist_choices.push("[shuffle all]".to_string());
+        choices.push(SHUFFLE_ENTRY.to_string());
     }
-    artist_choices.extend(artists.iter().filter_map(|path| {
-        path.file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-    }));
+    if mount::is_mounted(&config.music_dir) {
+        let artists = list_dirs(&config.music_dir)?;
+        choices.extend(artists.iter().filter_map(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        }));
+    } else {
+        choices.push(LOCAL_ENTRY.to_string());
+    }
 
+    let prompt = format!("--prompt={}> ", if include_all { "Play" } else { "Add" });
     let picked = fzf(
-        &artist_choices,
+        &choices,
         &[
             "--reverse",
             "--height=100%",
-            "--prompt=Artist> ",
+            &prompt,
             "--header=Enter: choose · Esc: cancel",
         ],
     )?;
-    let Some(artist) = picked.into_iter().next() else {
+    let Some(choice) = picked.into_iter().next() else {
         return Ok(None);
     };
 
-    if artist == "[shuffle all]" {
-        return Ok(Some(vec![config.music_dir.clone()]));
+    if choice == NTS_ENTRY {
+        return Ok(nts::pick(true)?.map(Selection::Nts));
+    }
+    if choice == SHUFFLE_ENTRY {
+        mount::ensure_mount(config)?;
+        return Ok(Some(Selection::Local(vec![config.music_dir.clone()])));
+    }
+    if choice == LOCAL_ENTRY {
+        mount::ensure_mount(config)?;
+        return pick(config, include_all);
     }
 
-    let artist_path = config.music_dir.join(&artist);
+    mount::ensure_mount(config)?;
+    let artist_path = config.music_dir.join(&choice);
+    if !artist_path.is_dir() {
+        bail!("no such artist: {choice}");
+    }
     let albums = list_dirs(&artist_path)?;
     if albums.is_empty() {
-        return Ok(Some(vec![artist_path]));
+        return Ok(Some(Selection::Local(vec![artist_path])));
     }
 
     let mut album_choices = vec!["[whole artist]".to_string()];
@@ -68,7 +92,7 @@ pub fn pick(config: &Config, include_all: bool) -> Result<Option<Vec<PathBuf>>> 
             "--reverse",
             "--height=100%",
             "--multi",
-            &format!("--prompt={artist} > "),
+            &format!("--prompt={choice} > "),
             "--header=Tab: multi-select · Enter: play · Esc: cancel",
         ],
     )?;
@@ -87,7 +111,7 @@ pub fn pick(config: &Config, include_all: bool) -> Result<Option<Vec<PathBuf>>> 
         })
         .collect();
 
-    Ok(Some(paths))
+    Ok(Some(Selection::Local(paths)))
 }
 
 /// Play a previous picker selection. A single music_dir means "shuffle all".

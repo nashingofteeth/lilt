@@ -158,12 +158,12 @@ pub fn queue(config: &Config) -> Result<()> {
         return Ok(());
     }
 
-    let nts = nts::load_current(config);
+    let nts = nts::cached_stations(config);
     for (index, entry) in entries.iter().enumerate() {
         let marker = if index as i64 == current { ">" } else { " " };
         let name = if let Some(station) = nts
-            .as_ref()
-            .filter(|station| station.stream_url == entry.filename)
+            .iter()
+            .find(|station| station.stream_url == entry.filename)
         {
             station.title.clone()
         } else {
@@ -188,7 +188,7 @@ pub fn play(config: &Config, inputs: &[String], shuffle: bool) -> Result<()> {
 
     let sources = inputs
         .iter()
-        .map(|input| queue::resolve_input(config, input))
+        .map(|input| resolve_source(config, input))
         .collect::<Result<Vec<_>>>()?;
     let has_url = sources
         .iter()
@@ -263,15 +263,41 @@ fn load_inputs(config: &Config, inputs: &[queue::Input], shuffle: bool) -> Resul
 
 pub fn add(config: &Config, inputs: &[String]) -> Result<()> {
     if inputs.is_empty() {
-        bail!("usage: lilt add PATH|URL...");
+        bail!("usage: lilt add PATH|URL|NTS...");
     }
     let sources = inputs
         .iter()
-        .map(|input| queue::resolve_input(config, input))
+        .map(|input| resolve_source(config, input))
         .collect::<Result<Vec<_>>>()?;
     append_inputs(config, &sources)?;
     println!("queued {} source(s)", sources.len());
     Ok(())
+}
+
+/// Resolve a local path or URL, falling back to an NTS live/mixtape name.
+fn resolve_source(config: &Config, input: &str) -> Result<queue::Input> {
+    match queue::resolve_input(config, input) {
+        Ok(source) => Ok(source),
+        Err(local_error) => {
+            if looks_like_nts(input)
+                && let Some(station) = nts::queue_station(config, input)
+            {
+                Ok(queue::Input::Url(station.stream_url))
+            } else {
+                Err(local_error)
+            }
+        }
+    }
+}
+
+/// NTS names have no path separators or extensions, so path typos do not
+/// trigger a network lookup.
+fn looks_like_nts(input: &str) -> bool {
+    !input.is_empty()
+        && !input.contains('/')
+        && !input.contains('\\')
+        && !input.contains('.')
+        && !input.starts_with('~')
 }
 
 /// Append already-resolved paths to the queue (used by `add` and the TUI).
@@ -280,7 +306,7 @@ pub fn append_paths(config: &Config, paths: &[PathBuf]) -> Result<()> {
     append_inputs(config, &inputs)
 }
 
-fn append_inputs(config: &Config, inputs: &[queue::Input]) -> Result<()> {
+pub(crate) fn append_inputs(config: &Config, inputs: &[queue::Input]) -> Result<()> {
     if inputs.is_empty() {
         bail!("nothing to add");
     }
@@ -629,6 +655,17 @@ fn parse_number(value: &str, what: &str) -> Result<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_bare_names_trigger_nts_lookup() {
+        assert!(looks_like_nts("slow-focus"));
+        assert!(looks_like_nts("Poolside"));
+        assert!(looks_like_nts("NTS 1"));
+        assert!(!looks_like_nts("/tmp/song.flac"));
+        assert!(!looks_like_nts("Artist/Album"));
+        assert!(!looks_like_nts("song.flac"));
+        assert!(!looks_like_nts("~"));
+    }
 
     #[test]
     fn formats_times() {

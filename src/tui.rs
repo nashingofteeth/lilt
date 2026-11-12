@@ -39,7 +39,6 @@ enum Focus {
 enum Pending {
     Play,
     Add,
-    Nts,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,8 +92,11 @@ fn auto_add_if_empty(config: &Config) -> Result<()> {
     if status.playlist_count > 0 {
         return Ok(());
     }
-    if let Some(paths) = browse::pick(config, false)? {
-        player::append_paths(config, &paths)?;
+    if let Some(selection) = browse::pick(config, false)? {
+        match selection {
+            browse::Selection::Local(paths) => player::append_paths(config, &paths)?,
+            browse::Selection::Nts(targets) => nts::add_many(config, &targets)?,
+        }
     }
     Ok(())
 }
@@ -429,7 +431,7 @@ impl App {
     }
 
     fn rebuild_items(&mut self) {
-        let nts = nts::load_current(&self.config);
+        let nts = nts::cached_stations(&self.config);
         self.items = self
             .playlist
             .iter()
@@ -438,8 +440,8 @@ impl App {
                 let current = index as i64 == self.status.playlist_pos;
                 let marker = if current { "●" } else { " " };
                 let name = if let Some(station) = nts
-                    .as_ref()
-                    .filter(|station| station.stream_url == entry.filename)
+                    .iter()
+                    .find(|station| station.stream_url == entry.filename)
                 {
                     station.title.clone()
                 } else {
@@ -556,10 +558,6 @@ impl App {
             }
             KeyCode::Char('a') if !ctrl => {
                 self.pending = Some(Pending::Add);
-                return;
-            }
-            KeyCode::Char('N') if !ctrl => {
-                self.pending = Some(Pending::Nts);
                 return;
             }
             KeyCode::Char('v') if !ctrl => {
@@ -901,30 +899,28 @@ impl App {
 
         let result = (|| -> Result<Option<&'static str>> {
             match action {
-                Pending::Play => {
-                    if let Some(paths) = browse::pick(&self.config, true)? {
+                Pending::Play => match browse::pick(&self.config, true)? {
+                    Some(browse::Selection::Local(paths)) => {
                         browse::play_paths(&self.config, &paths)?;
                         Ok(Some("playing new selection"))
-                    } else {
-                        Ok(None)
                     }
-                }
-                Pending::Add => {
-                    if let Some(paths) = browse::pick(&self.config, false)? {
+                    Some(browse::Selection::Nts(targets)) => {
+                        nts::play_many(&self.config, &targets)?;
+                        Ok(Some("playing NTS"))
+                    }
+                    None => Ok(None),
+                },
+                Pending::Add => match browse::pick(&self.config, false)? {
+                    Some(browse::Selection::Local(paths)) => {
                         player::append_paths(&self.config, &paths)?;
                         Ok(Some("added to queue"))
-                    } else {
-                        Ok(None)
                     }
-                }
-                Pending::Nts => {
-                    if let Some(target) = nts::pick()? {
-                        nts::play(&self.config, Some(&target))?;
-                        Ok(Some("playing NTS"))
-                    } else {
-                        Ok(None)
+                    Some(browse::Selection::Nts(targets)) => {
+                        nts::add_many(&self.config, &targets)?;
+                        Ok(Some("added NTS"))
                     }
-                }
+                    None => Ok(None),
+                },
             }
         })();
 
@@ -1335,7 +1331,7 @@ fn help_lines(focus: Focus, width: u16) -> Vec<Line<'static>> {
         match focus {
             Focus::NowPlaying => vec![
                 Line::from("space pause  j/k next/prev  h/l 10s  H/L 60s  -/+ vol"),
-                Line::from("s/r/m  x  o/b play  a add  v viz  Tab  / filter  f open  N nts  q/Q"),
+                Line::from("s/r/m  x  o/b play  a add  v viz  Tab queue  / filter  f open  q/Q"),
             ],
             Focus::Queue => vec![
                 Line::from("j/k move  Ctrl-d/u half  Ctrl-f/b page  Enter play"),
@@ -1348,7 +1344,7 @@ fn help_lines(focus: Focus, width: u16) -> Vec<Line<'static>> {
         match focus {
             Focus::NowPlaying => vec![
                 Line::from("space j/k h/l H/L -/+"),
-                Line::from("s r m x f o/b a v Tab N / q/Q"),
+                Line::from("s r m x f o/b a v Tab / q/Q"),
             ],
             Focus::Queue => vec![
                 Line::from("j/k ^d/^u ^f/^b Enter"),
@@ -1987,14 +1983,6 @@ mod key_tests {
 
         app.handle_key(key(KeyCode::Char('a')));
         assert_eq!(app.pending, Some(Pending::Add));
-        app.pending = None;
-
-        app.handle_key(key(KeyCode::Char('N')));
-        assert_eq!(app.pending, Some(Pending::Nts));
-        app.pending = None;
-
-        app.handle_key(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::SHIFT));
-        assert_eq!(app.pending, Some(Pending::Nts));
 
         let _ = std::fs::remove_dir_all(&base);
     }

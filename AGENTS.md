@@ -46,8 +46,8 @@ Current playback/queue mapping:
 
 | Action | CLI | TUI |
 | --- | --- | --- |
-| play/replace queue | `play SOURCE...` | `o` (local picker) |
-| add to queue | `add SOURCE...` | `a` (local picker) |
+| play/replace queue | `play SOURCE...` | `o` (library/NTS picker) |
+| add to queue | `add SOURCE...` | `a` (library/NTS picker) |
 | list queue | `queue` (alias `list`) | Queue pane |
 | toggle/pause/resume | `toggle`, `pause`, `resume` | `space` |
 | next/previous | `next`, `prev` | `n`, `p`, `j`, `k` |
@@ -59,7 +59,6 @@ Current playback/queue mapping:
 | repeat | `repeat [off\|all\|one]` | `r` |
 | jump to queue number | `jump N` | digits then `Enter`/`G` |
 | open playing item | `open` | `f` |
-| NTS live/mixtapes | `nts [1\|2\|list\|ALIAS]` | `N` (picker) |
 | quit mpv | `quit` | `Q` |
 | detach TUI | — | `q` |
 

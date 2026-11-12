@@ -35,25 +35,20 @@ enum Command {
     Unmount,
     /// Show mount, mpv, and now-playing state
     Status,
-    /// Replace the queue with SOURCE (local path or URL; whole library if omitted)
+    /// Replace the queue with SOURCE (local path, URL, NTS station; whole library if omitted)
     Play {
         #[arg(value_name = "SOURCE", num_args = 0..)]
         paths: Vec<String>,
         #[arg(long, short = 's')]
         shuffle: bool,
     },
-    /// Append local paths or URLs to the queue
+    /// Append local paths, URLs, or NTS stations to the queue
     Add {
         #[arg(required = true, num_args = 1..)]
         paths: Vec<String>,
     },
     /// Pick artists and albums with fzf
     Browse,
-    /// Play NTS Radio live, an Infinite Mixtape, or list stations
-    Nts {
-        /// 1, 2, "list", or a mixtape alias/title
-        target: Option<String>,
-    },
     /// List the current queue
     #[command(visible_alias = "list")]
     Queue,
@@ -130,10 +125,6 @@ fn run() -> Result<()> {
         Command::Play { paths, shuffle } => player::play(&config, &paths, shuffle),
         Command::Add { paths } => player::add(&config, &paths),
         Command::Browse => browse::browse(&config),
-        Command::Nts { target } => match target.as_deref() {
-            Some("list") => nts::list(),
-            target => nts::play(&config, target),
-        },
         Command::Queue => player::queue(&config),
         Command::Open => player::open(&config),
         Command::Toggle => player::toggle(&config),
@@ -170,8 +161,6 @@ mod fuzz_tests {
             "play",
             "add",
             "browse",
-            "nts",
-            "slow-focus",
             "volume",
             "seek",
             "shuffle",

@@ -36,18 +36,63 @@ impl Station {
     }
 }
 
-pub fn play(config: &Config, target: Option<&str>) -> Result<()> {
-    let station = resolve(target)?;
-    let cover_path = station
-        .cover_url
-        .as_deref()
-        .and_then(|url| download_cover(config, url));
-    let station = Station {
-        cover_path,
-        ..station
+pub fn play_many(config: &Config, targets: &[String]) -> Result<()> {
+    let targets = if targets.is_empty() {
+        vec!["1".to_string()]
+    } else {
+        targets.to_vec()
     };
-    save_current(config, &station)?;
-    player::play(config, std::slice::from_ref(&station.stream_url), false)
+    let stations = resolve_many(config, &targets)?;
+    let urls: Vec<String> = stations
+        .into_iter()
+        .map(|station| station.stream_url)
+        .collect();
+    player::play(config, &urls, false)
+}
+
+pub fn add_many(config: &Config, targets: &[String]) -> Result<()> {
+    if targets.is_empty() {
+        bail!("nothing to add");
+    }
+    let stations = resolve_many(config, targets)?;
+    let inputs: Vec<crate::queue::Input> = stations
+        .into_iter()
+        .map(|station| crate::queue::Input::Url(station.stream_url))
+        .collect();
+    player::append_inputs(config, &inputs)
+}
+
+fn resolve_many(config: &Config, targets: &[String]) -> Result<Vec<Station>> {
+    targets
+        .iter()
+        .map(|target| {
+            queue_station(config, target).with_context(|| format!("unknown NTS station: {target}"))
+        })
+        .collect()
+}
+
+/// Resolve a station name, download its artwork, and cache its metadata.
+/// Falls back to the cached sidecar when the NTS API is unreachable.
+pub fn queue_station(config: &Config, target: &str) -> Option<Station> {
+    match resolve(Some(target)) {
+        Ok(mut station) => {
+            let cover_path = station
+                .cover_url
+                .as_deref()
+                .and_then(|url| download_cover(config, url));
+            station.cover_path = cover_path;
+            save_station(config, &station).ok()?;
+            Some(station)
+        }
+        Err(_) => cached_match(config, target),
+    }
+}
+
+fn cached_match(config: &Config, target: &str) -> Option<Station> {
+    let wanted = target.trim();
+    cached_stations(config).into_iter().find(|station| {
+        station.key.eq_ignore_ascii_case(wanted) || station.title.eq_ignore_ascii_case(wanted)
+    })
 }
 
 pub fn resolve(target: Option<&str>) -> Result<Station> {
@@ -55,52 +100,60 @@ pub fn resolve(target: Option<&str>) -> Result<Station> {
     match target.to_ascii_lowercase().as_str() {
         "" | "1" | "nts1" | "nts 1" | "nts-1" => Ok(live_or_static(1)),
         "2" | "nts2" | "nts 2" | "nts-2" => Ok(live_or_static(2)),
-        "list" => bail!("usage: lilt nts [1|2|list|ALIAS]"),
         _ => mixtape(target),
     }
 }
 
-pub fn list() -> Result<()> {
-    for station in stations()? {
-        println!("{:<20}  {}", station.key, station.label());
-    }
-    Ok(())
-}
-
-pub fn pick() -> Result<Option<String>> {
-    let lines: Vec<String> = stations()?
+pub fn pick(multi: bool) -> Result<Option<Vec<String>>> {
+    let lines: Vec<String> = fetch_stations()?
         .iter()
         .map(|station| format!("{}\t{}", station.key, station.label()))
         .collect();
-    let picked = crate::browse::fzf(
-        &lines,
-        &[
-            "--delimiter=\t",
-            "--with-nth=2",
-            "--reverse",
-            "--height=100%",
-            "--prompt=NTS> ",
-            "--header=Enter: play · Esc: cancel",
-        ],
-    )?;
-    let Some(line) = picked.into_iter().next() else {
-        return Ok(None);
-    };
-    Ok(line
-        .split('\t')
-        .next()
-        .filter(|key| !key.is_empty())
-        .map(str::to_string))
+    let mut args = vec![
+        "--delimiter=\t",
+        "--with-nth=2",
+        "--reverse",
+        "--height=100%",
+        "--prompt=NTS> ",
+        "--header=Tab: multi-select · Enter: play · Esc: cancel",
+    ];
+    if multi {
+        args.push("--multi");
+    }
+    let picked = crate::browse::fzf(&lines, &args)?;
+    let targets: Vec<String> = picked
+        .into_iter()
+        .filter_map(|line| {
+            line.split('\t')
+                .next()
+                .filter(|key| !key.is_empty())
+                .map(str::to_string)
+        })
+        .collect();
+    if targets.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(targets))
+    }
 }
 
-pub fn load_current(config: &Config) -> Option<Station> {
-    let text = std::fs::read_to_string(current_path(config)).ok()?;
-    serde_json::from_str(&text).ok()
+pub fn cached_stations(config: &Config) -> Vec<Station> {
+    let Ok(text) = std::fs::read_to_string(current_path(config)) else {
+        return Vec::new();
+    };
+    if let Ok(stations) = serde_json::from_str::<Vec<Station>>(&text) {
+        return stations;
+    }
+    // Migrate the single-station sidecar written by the first NTS version.
+    serde_json::from_str::<Station>(&text)
+        .map(|station| vec![station])
+        .unwrap_or_default()
 }
 
 pub fn current(config: &Config, path: &str) -> Option<Station> {
-    let station = load_current(config)?;
-    (station.stream_url == path).then_some(station)
+    cached_stations(config)
+        .into_iter()
+        .find(|station| station.stream_url == path)
 }
 
 /// Replace the mpv-reported stream URL with the NTS station identity.
@@ -123,9 +176,18 @@ fn current_path(config: &Config) -> PathBuf {
     config.cache_dir.join("nts.json")
 }
 
-fn save_current(config: &Config, station: &Station) -> Result<()> {
+fn save_station(config: &Config, station: &Station) -> Result<()> {
     config.ensure_dirs()?;
-    let text = serde_json::to_vec_pretty(station)?;
+    let mut stations = cached_stations(config);
+    if let Some(existing) = stations
+        .iter_mut()
+        .find(|existing| existing.stream_url == station.stream_url)
+    {
+        *existing = station.clone();
+    } else {
+        stations.push(station.clone());
+    }
+    let text = serde_json::to_vec_pretty(&stations)?;
     std::fs::write(current_path(config), text).context("writing NTS metadata")
 }
 
@@ -242,7 +304,7 @@ fn mixtape(query: &str) -> Result<Station> {
     let stations = mixtapes()?;
     let wanted = query.trim().to_ascii_lowercase();
     if wanted.is_empty() {
-        bail!("usage: lilt nts [1|2|list|ALIAS]");
+        bail!("no NTS mixtape selected");
     }
     stations
         .iter()
@@ -253,7 +315,7 @@ fn mixtape(query: &str) -> Result<Station> {
                 || station.title.to_ascii_lowercase().contains(&wanted)
         })
         .cloned()
-        .with_context(|| format!("unknown NTS mixtape: {query} (try `lilt nts list`)"))
+        .with_context(|| format!("unknown NTS mixtape: {query} (choose it from the NTS picker)"))
 }
 
 fn mixtape_from_value(value: &Value) -> Option<Station> {
@@ -290,7 +352,7 @@ fn mixtape_from_value(value: &Value) -> Option<Station> {
     })
 }
 
-fn stations() -> Result<Vec<Station>> {
+fn fetch_stations() -> Result<Vec<Station>> {
     let mut stations = Vec::new();
     match curl_json(LIVE_API) {
         Ok(data) => {
@@ -376,5 +438,73 @@ mod tests {
     #[test]
     fn decodes_basic_html_entities() {
         assert_eq!(decode_html("A &amp; B &#39;live&#39;"), "A & B 'live'");
+    }
+
+    fn station(url: &str, title: &str) -> Station {
+        Station {
+            key: title.to_ascii_lowercase().replace(' ', "-"),
+            title: title.to_string(),
+            subtitle: String::new(),
+            artist: "NTS".to_string(),
+            album: "Infinite Mixtapes".to_string(),
+            stream_url: url.to_string(),
+            cover_url: None,
+            cover_path: None,
+            live: false,
+        }
+    }
+
+    #[test]
+    fn caches_stations_by_stream_url() {
+        let base = crate::test_support::unique_base("nts-cache");
+        let config = crate::test_support::test_config(base.join("Music"), &base);
+        let mut first = station("https://a", "A");
+        let second = station("https://b", "B");
+
+        save_station(&config, &first).unwrap();
+        save_station(&config, &second).unwrap();
+        assert_eq!(cached_stations(&config).len(), 2);
+
+        first.title = "A2".to_string();
+        save_station(&config, &first).unwrap();
+        assert_eq!(cached_stations(&config).len(), 2);
+        assert_eq!(current(&config, "https://a").unwrap().title, "A2");
+        assert!(current(&config, "https://missing").is_none());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn reads_legacy_single_station_cache() {
+        let base = crate::test_support::unique_base("nts-cache-legacy");
+        let config = crate::test_support::test_config(base.join("Music"), &base);
+        config.ensure_dirs().unwrap();
+        let legacy = station("https://a", "A");
+        std::fs::write(current_path(&config), serde_json::to_vec(&legacy).unwrap()).unwrap();
+
+        assert_eq!(cached_stations(&config).len(), 1);
+        assert_eq!(current(&config, "https://a").unwrap().title, "A");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn finds_cached_station_by_name() {
+        let base = crate::test_support::unique_base("nts-cache-match");
+        let config = crate::test_support::test_config(base.join("Music"), &base);
+        let station = station("https://a", "Slow Focus");
+        save_station(&config, &station).unwrap();
+
+        assert_eq!(
+            cached_match(&config, "slow-focus").map(|station| station.stream_url),
+            Some("https://a".to_string())
+        );
+        assert_eq!(
+            cached_match(&config, "  Slow Focus ").map(|station| station.stream_url),
+            Some("https://a".to_string())
+        );
+        assert!(cached_match(&config, "missing").is_none());
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
