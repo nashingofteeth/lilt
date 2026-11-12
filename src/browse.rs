@@ -15,13 +15,13 @@ const SHUFFLE_ENTRY: &str = "[shuffle all]";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Selection {
     Local(Vec<PathBuf>),
-    Nts(Vec<String>),
+    Nts(Vec<nts::Station>),
 }
 
 pub fn browse(config: &Config) -> Result<()> {
     match pick(config, true)? {
         Some(Selection::Local(paths)) => play_paths(config, &paths),
-        Some(Selection::Nts(targets)) => nts::play_many(config, &targets),
+        Some(Selection::Nts(stations)) => nts::play_many(config, &stations),
         None => Ok(()),
     }
 }

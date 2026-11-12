@@ -102,7 +102,7 @@ fn auto_add_if_empty(config: &Config) -> Result<()> {
     if let Some(selection) = browse::pick(config, false)? {
         match selection {
             browse::Selection::Local(paths) => player::append_paths(config, &paths)?,
-            browse::Selection::Nts(targets) => nts::add_many(config, &targets)?,
+            browse::Selection::Nts(stations) => nts::add_many(config, &stations)?,
         }
     }
     Ok(())
@@ -908,8 +908,8 @@ impl App {
                         browse::play_paths(&self.config, &paths)?;
                         Ok(Some("playing new selection"))
                     }
-                    Some(browse::Selection::Nts(targets)) => {
-                        nts::play_many(&self.config, &targets)?;
+                    Some(browse::Selection::Nts(stations)) => {
+                        nts::play_many(&self.config, &stations)?;
                         Ok(Some("playing NTS"))
                     }
                     None => Ok(None),
@@ -919,8 +919,8 @@ impl App {
                         player::append_paths(&self.config, &paths)?;
                         Ok(Some("added to queue"))
                     }
-                    Some(browse::Selection::Nts(targets)) => {
-                        nts::add_many(&self.config, &targets)?;
+                    Some(browse::Selection::Nts(stations)) => {
+                        nts::add_many(&self.config, &stations)?;
                         Ok(Some("added NTS"))
                     }
                     None => Ok(None),

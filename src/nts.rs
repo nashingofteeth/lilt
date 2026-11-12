@@ -13,7 +13,7 @@ const LIVE_API: &str = "https://www.nts.live/api/v2/live";
 const MIXTAPES_API: &str = "https://www.nts.live/api/v2/mixtapes";
 
 /// NTS station metadata persisted between the CLI and the control panel.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Station {
     pub key: String,
     pub title: String,
@@ -36,13 +36,13 @@ impl Station {
     }
 }
 
-pub fn play_many(config: &Config, targets: &[String]) -> Result<()> {
-    let targets = if targets.is_empty() {
-        vec!["1".to_string()]
+pub fn play_many(config: &Config, stations: &[Station]) -> Result<()> {
+    let stations = if stations.is_empty() {
+        vec![live_or_static(1)]
     } else {
-        targets.to_vec()
+        stations.to_vec()
     };
-    let stations = resolve_many(config, &targets)?;
+    save_stations(config, &stations);
     let urls: Vec<String> = stations
         .into_iter()
         .map(|station| station.stream_url)
@@ -50,25 +50,24 @@ pub fn play_many(config: &Config, targets: &[String]) -> Result<()> {
     player::play(config, &urls, false)
 }
 
-pub fn add_many(config: &Config, targets: &[String]) -> Result<()> {
-    if targets.is_empty() {
+pub fn add_many(config: &Config, stations: &[Station]) -> Result<()> {
+    if stations.is_empty() {
         bail!("nothing to add");
     }
-    let stations = resolve_many(config, targets)?;
+    save_stations(config, stations);
     let inputs: Vec<crate::queue::Input> = stations
-        .into_iter()
-        .map(|station| crate::queue::Input::Url(station.stream_url))
+        .iter()
+        .map(|station| crate::queue::Input::Url(station.stream_url.clone()))
         .collect();
     player::append_inputs(config, &inputs)
 }
 
-fn resolve_many(config: &Config, targets: &[String]) -> Result<Vec<Station>> {
-    targets
-        .iter()
-        .map(|target| {
-            queue_station(config, target).with_context(|| format!("unknown NTS station: {target}"))
-        })
-        .collect()
+/// Persist picker metadata without refetching it. Artwork is downloaded lazily
+/// by the control panel's cover thread.
+fn save_stations(config: &Config, stations: &[Station]) {
+    for station in stations {
+        let _ = save_station(config, station);
+    }
 }
 
 /// Resolve a station name, download its artwork, and cache its metadata.
@@ -104,8 +103,9 @@ pub fn resolve(target: Option<&str>) -> Result<Station> {
     }
 }
 
-pub fn pick(multi: bool) -> Result<Option<Vec<String>>> {
-    let lines: Vec<String> = fetch_stations()?
+pub fn pick(multi: bool) -> Result<Option<Vec<Station>>> {
+    let stations = fetch_stations()?;
+    let lines: Vec<String> = stations
         .iter()
         .map(|station| format!("{}\t{}", station.key, station.label()))
         .collect();
@@ -121,13 +121,14 @@ pub fn pick(multi: bool) -> Result<Option<Vec<String>>> {
         args.push("--multi");
     }
     let picked = crate::browse::fzf(&lines, &args)?;
-    let targets: Vec<String> = picked
+    let targets: Vec<Station> = picked
         .into_iter()
         .filter_map(|line| {
-            line.split('\t')
-                .next()
-                .filter(|key| !key.is_empty())
-                .map(str::to_string)
+            let key = line.split('\t').next().filter(|key| !key.is_empty())?;
+            stations
+                .iter()
+                .find(|station| station.key.as_str() == key)
+                .cloned()
         })
         .collect();
     if targets.is_empty() {
@@ -202,7 +203,18 @@ fn save_station(config: &Config, station: &Station) -> Result<()> {
         .iter_mut()
         .find(|existing| existing.stream_url == station.stream_url)
     {
-        *existing = station.clone();
+        let mut updated = station.clone();
+        // A picker refresh may not carry artwork yet. Keep a cached cover when
+        // the artwork URL is unchanged (or the refresh has no URL at all).
+        if updated.cover_path.is_none() {
+            if updated.cover_url.is_none() {
+                updated.cover_url = existing.cover_url.clone();
+                updated.cover_path = existing.cover_path.clone();
+            } else if updated.cover_url == existing.cover_url {
+                updated.cover_path = existing.cover_path.clone();
+            }
+        }
+        *existing = updated;
     } else {
         stations.push(station.clone());
     }
@@ -690,6 +702,48 @@ mod tests {
         assert_eq!(cached_stations(&config).len(), 2);
         assert_eq!(current(&config, "https://a").unwrap().title, "A2");
         assert!(current(&config, "https://missing").is_none());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn preserves_cached_cover_when_metadata_refreshes() {
+        let base = crate::test_support::unique_base("nts-cover-merge");
+        let config = crate::test_support::test_config(base.join("Music"), &base);
+
+        let mut first = station("https://a", "A");
+        first.cover_url = Some("https://art".to_string());
+        first.cover_path = Some(PathBuf::from("/tmp/art.jpg"));
+        save_station(&config, &first).unwrap();
+
+        let mut refreshed = first.clone();
+        refreshed.title = "A2".to_string();
+        refreshed.cover_path = None;
+        save_station(&config, &refreshed).unwrap();
+        let cached = current(&config, "https://a").unwrap();
+        assert_eq!(cached.title, "A2");
+        assert_eq!(
+            cached.cover_path.as_deref(),
+            Some(std::path::Path::new("/tmp/art.jpg"))
+        );
+
+        let mut changed = refreshed.clone();
+        changed.title = "A3".to_string();
+        changed.cover_url = Some("https://new-art".to_string());
+        save_station(&config, &changed).unwrap();
+        let cached = current(&config, "https://a").unwrap();
+        assert_eq!(cached.title, "A3");
+        assert_eq!(cached.cover_url.as_deref(), Some("https://new-art"));
+        assert!(cached.cover_path.is_none());
+
+        let mut no_url = changed.clone();
+        no_url.title = "A4".to_string();
+        no_url.cover_url = None;
+        save_station(&config, &no_url).unwrap();
+        let cached = current(&config, "https://a").unwrap();
+        assert_eq!(cached.title, "A4");
+        assert_eq!(cached.cover_url.as_deref(), Some("https://new-art"));
+        assert!(cached.cover_path.is_none());
 
         let _ = std::fs::remove_dir_all(&base);
     }
