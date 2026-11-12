@@ -545,6 +545,8 @@ pub fn set_shuffle_client(client: &mut Mpv, enabled: bool) -> Result<()> {
     set_bool(client, "shuffle", enabled)?;
     if enabled {
         client.command(&["playlist-shuffle"])?;
+    } else {
+        client.command(&["playlist-unshuffle"])?;
     }
     Ok(())
 }

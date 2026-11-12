@@ -114,9 +114,9 @@ track; `music list` is an alias. `music resume` and `music toggle` restart the
 queue from the beginning when playback has ended.
 
 `music shuffle on` reorders the existing queue while keeping the current track.
-`music shuffle off` stops randomizing but leaves the current order intact;
-`music play --shuffle` randomizes a newly loaded queue. The TUI `s` key uses the
-same behavior.
+`music shuffle off` disables randomization, restores the original queue order,
+and keeps the current track playing; `music play --shuffle` randomizes a newly
+loaded queue. The TUI `s` key uses the same behavior.
 
 A local `SOURCE` may be absolute, relative to the current directory, or relative
 to the music mount — so `music play "Brian Eno"` and
