@@ -48,7 +48,11 @@ enum CoverKey {
 }
 
 pub fn run(config: &Config) -> Result<()> {
-    let mut app = App::new(config.clone());
+    // Query the terminal before any other I/O (the auto-add picker, the
+    // alternate screen, cover loading) so the response is not lost and the
+    // first cover is encoded with the detected protocol.
+    let picker = detect_picker();
+    let mut app = App::new(config.clone(), picker);
     // Opening the panel with nothing queued should go straight to the add
     // picker, so the first thing you see is a library to choose from.
     if let Err(error) = auto_add_if_empty(config) {
@@ -59,15 +63,6 @@ pub fn run(config: &Config) -> Result<()> {
     let mut terminal = ratatui::try_init().context("initializing terminal")?;
     let _ = execute!(std::io::stdout(), SetTitle("lilt controls"));
     let _guard = TermGuard;
-
-    // Query before the event loop so terminal responses are not mistaken for
-    // key presses. Falls back to halfblocks on terminals without graphics.
-    let query = QueryStdioOptions {
-        timeout: Duration::from_millis(400),
-        ..QueryStdioOptions::default()
-    };
-    app.picker =
-        Picker::from_query_stdio_with_options(query).unwrap_or_else(|_| Picker::halfblocks());
 
     let old_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -80,6 +75,18 @@ pub fn run(config: &Config) -> Result<()> {
     let result = app.event_loop(&mut terminal);
     ratatui::restore();
     result
+}
+
+/// Detect the terminal's image protocol and cell size. Falls back to
+/// halfblocks on terminals without graphics support.
+fn detect_picker() -> Picker {
+    let query = QueryStdioOptions {
+        // Give slow terminals and multiplexers time to answer; a successful
+        // query returns immediately, so this only affects fallback cases.
+        timeout: Duration::from_millis(1000),
+        ..QueryStdioOptions::default()
+    };
+    Picker::from_query_stdio_with_options(query).unwrap_or_else(|_| Picker::halfblocks())
 }
 
 fn auto_add_if_empty(config: &Config) -> Result<()> {
@@ -140,7 +147,7 @@ struct App {
 }
 
 impl App {
-    fn new(config: Config) -> Self {
+    fn new(config: Config, picker: Picker) -> Self {
         let mpv = Mpv::connect(&config.socket).ok();
         let saw_mpv = mpv.is_some();
         let mut app = Self {
@@ -159,7 +166,7 @@ impl App {
             filter_editing: false,
             filtered: Vec::new(),
             number_buffer: String::new(),
-            picker: Picker::halfblocks(),
+            picker,
             cover_key: None,
             cover_pending: None,
             cover_aspect: None,
@@ -1769,7 +1776,7 @@ mod cover_placeholder_tests {
         let music = base.join("Music");
         std::fs::create_dir_all(&music).unwrap();
         let config = test_config(music.clone(), &base);
-        let mut app = App::new(config);
+        let mut app = App::new(config, Picker::halfblocks());
         let path = music.join("song.flac").display().to_string();
         app.status.path = path.clone();
         app.status.media_title = "song.flac".to_string();
@@ -1803,12 +1810,28 @@ mod cover_placeholder_tests {
     }
 
     #[test]
+    fn keeps_the_detected_image_picker() {
+        let base = unique_base("tui-picker");
+        let music = base.join("Music");
+        std::fs::create_dir_all(&music).unwrap();
+        let config = test_config(music, &base);
+        let mut picker = Picker::halfblocks();
+        picker.set_protocol_type(ratatui_image::picker::ProtocolType::Kitty);
+        let app = App::new(config, picker);
+        assert_eq!(
+            app.picker.protocol_type(),
+            ratatui_image::picker::ProtocolType::Kitty
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn external_url_uses_media_title_instead_of_path() {
         let base = unique_base("tui-external");
         let music = base.join("Music");
         std::fs::create_dir_all(&music).unwrap();
         let config = test_config(music, &base);
-        let mut app = App::new(config);
+        let mut app = App::new(config, Picker::halfblocks());
         app.status.path = "https://www.youtube.com/watch?v=abc".to_string();
         app.status.media_title = "Video Title".to_string();
         app.status.has_title_tag = false;
@@ -1826,7 +1849,7 @@ mod cover_placeholder_tests {
         let music = base.join("Music");
         std::fs::create_dir_all(&music).unwrap();
         let config = test_config(music.clone(), &base);
-        let mut app = App::new(config);
+        let mut app = App::new(config, Picker::halfblocks());
         let path = music.join("song.flac").display().to_string();
         app.status.path = path.clone();
         app.status.has_title_tag = true;
@@ -1856,7 +1879,7 @@ mod key_tests {
     fn app_with_items(items: &[&str]) -> (App, PathBuf) {
         let base = unique_base("tui-keys");
         let config = test_config(base.join("Music"), &base);
-        let mut app = App::new(config);
+        let mut app = App::new(config, Picker::halfblocks());
         app.items = items.iter().map(|item| item.to_string()).collect();
         app.playlist = items
             .iter()
@@ -1997,7 +2020,7 @@ mod page_key_tests {
     fn app_with_items(items: &[String]) -> (App, PathBuf) {
         let base = unique_base("tui-pages");
         let config = test_config(base.join("Music"), &base);
-        let mut app = App::new(config);
+        let mut app = App::new(config, Picker::halfblocks());
         app.items = items.to_vec();
         app.playlist = items
             .iter()
