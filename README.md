@@ -178,6 +178,7 @@ open.
 | `n` / `p` | next / previous track |
 | `x` | stop playback (keep mpv running) |
 | `h` / `l` | seek −10s / +10s |
+| `H` / `L` | seek −60s / +60s |
 | `-` / `+` | volume −5 / +5 |
 | `s` / `r` / `m` | shuffle / repeat / mute |
 | `o` (or `b`) | browse library → play now (replace queue) |

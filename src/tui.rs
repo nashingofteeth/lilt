@@ -585,6 +585,14 @@ impl App {
                 self.seek_relative(10.0);
                 return;
             }
+            KeyCode::Char('H') if !ctrl => {
+                self.seek_relative(-60.0);
+                return;
+            }
+            KeyCode::Char('L') if !ctrl => {
+                self.seek_relative(60.0);
+                return;
+            }
             KeyCode::Char('+') | KeyCode::Char('=') if !ctrl => {
                 self.adjust_volume(5.0);
                 return;
@@ -1362,7 +1370,7 @@ fn help_lines(focus: Focus, width: u16) -> Vec<Line<'static>> {
     } else {
         match focus {
             Focus::NowPlaying => vec![
-                Line::from("space j/k h/l -/+ g/G"),
+                Line::from("space j/k h/l H/L -/+ g/G"),
                 Line::from("s r m x o/b a v Tab / q/Q"),
             ],
             Focus::Queue => vec![
