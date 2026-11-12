@@ -82,13 +82,15 @@ support, so `lilt mount`/`play` would otherwise fail.
 
 ## Usage
 
-`lilt mount` mounts the library in the foreground (`Ctrl-C` unmounts). `lilt`
-or `lilt help` shows the command list.
+`lilt mount` mounts the library in the background and returns once it is ready;
+`lilt unmount` stops the mount. Mount logs go to `~/.cache/lilt/rclone.log`.
+Unmount quits mpv only when a library track is playing or queued, so URL-only
+playback keeps running. `lilt` or `lilt help` shows the command list.
 
 ```
 Library
-  lilt mount                    Mount in the foreground
-  lilt unmount                  Quit mpv, then unmount the library
+  lilt mount                    Mount in the background
+  lilt unmount                  Unmount; quit mpv only for library playback
   lilt status                   Mount state + now playing
 
 Playback

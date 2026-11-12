@@ -29,9 +29,9 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Mount the music library in the foreground
+    /// Mount the music library in the background
     Mount,
-    /// Quit mpv and unmount the library
+    /// Unmount the library, quitting mpv if library tracks are in use
     Unmount,
     /// Show mount, mpv, and now-playing state
     Status,
@@ -120,7 +120,7 @@ fn run() -> Result<()> {
 
     let config = Config::load()?;
     match command {
-        Command::Mount => mount::mount_foreground(&config),
+        Command::Mount => mount::mount(&config),
         Command::Unmount => mount::unmount(&config),
         Command::Status => player::status(&config),
         Command::Play { paths, shuffle } => player::play(&config, &paths, shuffle),

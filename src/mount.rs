@@ -27,22 +27,14 @@ fn rclone_args(config: &Config) -> Vec<std::ffi::OsString> {
     args
 }
 
-pub fn mount_foreground(config: &Config) -> Result<()> {
+pub fn mount(config: &Config) -> Result<()> {
     if is_mounted(&config.music_dir) {
         println!("already mounted at {}", config.music_dir.display());
         return Ok(());
     }
-    std::fs::create_dir_all(&config.music_dir)
-        .with_context(|| format!("creating {}", config.music_dir.display()))?;
-
-    let mut command = Command::new("rclone");
-    command.args(rclone_args(config));
-    let err = command.exec();
-    Err(anyhow::Error::new(err).context(format!(
-        "starting rclone mount of {} at {}",
-        config.remote,
-        config.music_dir.display()
-    )))
+    ensure_mount(config)?;
+    println!("mounted {}", config.music_dir.display());
+    Ok(())
 }
 
 pub fn ensure_mount(config: &Config) -> Result<()> {
@@ -108,8 +100,9 @@ pub fn ensure_mount(config: &Config) -> Result<()> {
 }
 
 pub fn unmount(config: &Config) -> Result<()> {
-    // Quit mpv first: prefetched/demuxer handles can keep the FUSE mount busy.
-    if mpv::alive(config) {
+    // Local playback and queued library tracks can keep FUSE handles open.
+    // URL-only playback does not need the mount, so leave mpv running then.
+    if uses_library(config) {
         let _ = mpv::quit(config, true);
     }
 
@@ -152,4 +145,72 @@ fn pid_is_our_rclone(pid: u32, config: &Config) -> bool {
                 && text.contains(&config.music_dir.display().to_string())
         })
         .unwrap_or(false)
+}
+
+/// Whether mpv is playing, or has queued, anything from the music mount.
+fn uses_library(config: &Config) -> bool {
+    let Ok(mut client) = mpv::Mpv::connect(&config.socket) else {
+        return false;
+    };
+    if let Ok(status) = client.status()
+        && is_library_path(config, &status.path)
+    {
+        return true;
+    }
+    client
+        .playlist()
+        .map(|entries| {
+            entries
+                .iter()
+                .any(|entry| is_library_path(config, &entry.filename))
+        })
+        .unwrap_or(false)
+}
+
+fn is_library_path(config: &Config, path: &str) -> bool {
+    if path.is_empty() || crate::queue::is_url(path) {
+        return false;
+    }
+    let candidate = Path::new(path);
+    if candidate.starts_with(&config.music_dir) {
+        return true;
+    }
+    // Playlist entries can be canonical paths while the configured mount is
+    // not (or vice versa), so compare canonical forms as a fallback.
+    let Ok(candidate) = std::fs::canonicalize(candidate) else {
+        return false;
+    };
+    std::fs::canonicalize(&config.music_dir)
+        .map(|root| candidate.starts_with(root))
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_local_library_paths_only() {
+        let base = crate::test_support::unique_base("mount-paths");
+        let music = base.join("Music");
+        std::fs::create_dir_all(&music).unwrap();
+        let config = crate::test_support::test_config(music.clone(), &base);
+
+        let track = music.join("Artist/song.flac");
+        std::fs::create_dir_all(track.parent().unwrap()).unwrap();
+        std::fs::write(&track, b"test").unwrap();
+        assert!(is_library_path(&config, &track.display().to_string()));
+        assert!(is_library_path(
+            &config,
+            &music.join("./Artist/song.flac").display().to_string()
+        ));
+        assert!(!is_library_path(&config, "/tmp/outside.flac"));
+        assert!(!is_library_path(
+            &config,
+            "https://stream-relay-geo.ntslive.net/stream"
+        ));
+        assert!(!is_library_path(&config, ""));
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

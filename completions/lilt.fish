@@ -6,8 +6,8 @@ set -l __lilt_commands \
     play add browse queue list open toggle pause resume next prev stop mute jump \
     volume seek shuffle repeat quit restart panel logs help
 
-complete -c lilt -n '__fish_use_subcommand' -a mount -d 'Mount the music library'
-complete -c lilt -n '__fish_use_subcommand' -a unmount -d 'Quit mpv and unmount'
+complete -c lilt -n '__fish_use_subcommand' -a mount -d 'Mount the music library in the background'
+complete -c lilt -n '__fish_use_subcommand' -a unmount -d 'Unmount; quit mpv only for library playback'
 complete -c lilt -n '__fish_use_subcommand' -a status -d 'Show mount and playback state'
 complete -c lilt -n '__fish_use_subcommand' -a play -d 'Replace the queue with paths, URLs, or NTS stations'
 complete -c lilt -n '__fish_use_subcommand' -a add -d 'Append local paths, URLs, or NTS stations'
