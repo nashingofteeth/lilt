@@ -61,7 +61,7 @@ pub fn run(config: &Config) -> Result<()> {
     app.refresh();
 
     let mut terminal = ratatui::try_init().context("initializing terminal")?;
-    let _ = execute!(std::io::stdout(), SetTitle("lilt controls"));
+    let _ = execute!(std::io::stdout(), SetTitle("lilt panel"));
     let _guard = TermGuard;
 
     let old_hook = std::panic::take_hook();

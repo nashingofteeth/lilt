@@ -4,7 +4,7 @@ complete -c music -f
 set -l __music_commands \
     mount unmount status \
     play add browse queue list open toggle pause resume next prev stop mute jump \
-    volume seek shuffle repeat quit restart controls logs help
+    volume seek shuffle repeat quit restart panel logs help
 
 complete -c music -n '__fish_use_subcommand' -a mount -d 'Mount the music library'
 complete -c music -n '__fish_use_subcommand' -a unmount -d 'Quit mpv and unmount'
@@ -29,7 +29,7 @@ complete -c music -n '__fish_use_subcommand' -a shuffle -d 'Shuffle the queue'
 complete -c music -n '__fish_use_subcommand' -a repeat -d 'Set repeat mode'
 complete -c music -n '__fish_use_subcommand' -a quit -d 'Exit the mpv daemon'
 complete -c music -n '__fish_use_subcommand' -a restart -d 'Quit mpv and unmount'
-complete -c music -n '__fish_use_subcommand' -a controls -d 'Single-key control panel'
+complete -c music -n '__fish_use_subcommand' -a panel -d 'Full-screen control panel'
 complete -c music -n '__fish_use_subcommand' -a logs -d 'Show rclone/mpv logs'
 complete -c music -n '__fish_use_subcommand' -a help -d 'Show usage'
 

@@ -3,7 +3,7 @@
 ## Project
 
 `lilt` is a Rust wrapper around a detached, audio-only `mpv` daemon. The CLI
-and the ratatui control panel (`lilt controls`) are two front ends for the same
+and the ratatui control panel (`lilt panel`) are two front ends for the same
 queue and playback state. The installed binary is `lilt`; a temporary `music`
 alias and legacy config/env fallbacks exist for migration.
 

@@ -107,7 +107,7 @@ Playback
   lilt seek N|-N|N%
   lilt shuffle [on|off|toggle]
   lilt repeat [off|all|one]
-  lilt controls                 Full-screen control panel
+  lilt panel                    Full-screen control panel
   lilt quit                     Stop and exit mpv
   lilt restart                  Quit mpv and unmount the library
   lilt logs [-f]                Tail rclone/mpv logs
@@ -169,7 +169,7 @@ detached mpv daemon and exits, so the picker window closes immediately.
 
 ### Control panel
 
-`lilt controls` is a ratatui UI with three panes:
+`lilt panel` is a ratatui UI with three panes:
 
 - **Now Playing** — artist/album, title, progress, volume/shuffle/repeat.
 - **Spectrum** — live bars from the music player’s output (`v` toggles it).
@@ -323,7 +323,7 @@ would be a local rclone VFS cache rather than larger demux buffers.
 ## Desktop integration (Linux/niri)
 
 Example [niri](https://github.com/YaLTeR/niri) binding that focuses an existing
-controls window or opens one as a normal tiled window:
+panel window or opens one as a normal tiled window:
 
 ```kdl
 Mod+M { spawn-sh "~/.config/niri/focus-or-spawn-lilt.sh"; }
@@ -332,7 +332,7 @@ Mod+M { spawn-sh "~/.config/niri/focus-or-spawn-lilt.sh"; }
 The helper wraps:
 
 ```sh
-ghostty --class=com.mitchellh.ghostty.lilt -e "$(command -v lilt)" controls
+ghostty --class=com.mitchellh.ghostty.lilt -e "$(command -v lilt)" panel
 ```
 
 No window rule is needed, so it tiles like any other window.

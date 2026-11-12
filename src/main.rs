@@ -86,8 +86,9 @@ enum Command {
     Repeat { mode: Option<String> },
     /// Stop and exit the mpv daemon
     Quit,
-    /// Single-key control panel
-    Controls,
+    /// Full-screen control panel
+    #[command(alias = "controls")]
+    Panel,
     /// Show rclone/mpv logs
     Logs {
         #[arg(short = 'f', long)]
@@ -140,7 +141,7 @@ fn run() -> Result<()> {
         Command::Shuffle { mode } => player::shuffle(&config, mode.as_deref()),
         Command::Repeat { mode } => player::repeat(&config, mode.as_deref()),
         Command::Quit => player::quit(&config),
-        Command::Controls => {
+        Command::Panel => {
             mpv::ensure_daemon(&config)?;
             tui::run(&config)
         }
@@ -166,6 +167,7 @@ mod fuzz_tests {
             "shuffle",
             "repeat",
             "status",
+            "panel",
             "controls",
             "mount",
             "unmount",
