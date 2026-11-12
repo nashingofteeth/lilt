@@ -161,10 +161,7 @@ pub fn queue(config: &Config) -> Result<()> {
     let nts = nts::cached_stations(config);
     for (index, entry) in entries.iter().enumerate() {
         let marker = if index as i64 == current { ">" } else { " " };
-        let name = if let Some(station) = nts
-            .iter()
-            .find(|station| station.stream_url == entry.filename)
-        {
+        let name = if let Some(station) = nts::find_station(&nts, &entry.filename) {
             station.title.clone()
         } else {
             entry
@@ -276,6 +273,12 @@ pub fn add(config: &Config, inputs: &[String]) -> Result<()> {
 
 /// Resolve a local path or URL, falling back to an NTS live/mixtape name.
 fn resolve_source(config: &Config, input: &str) -> Result<queue::Input> {
+    if nts::is_episode_url(input) {
+        // Best effort: use the NTS API for show/episode metadata while still
+        // letting mpv/yt-dlp resolve the actual audio stream.
+        nts::queue_episode(config, input);
+        return Ok(queue::Input::Url(input.to_string()));
+    }
     match queue::resolve_input(config, input) {
         Ok(source) => Ok(source),
         Err(local_error) => {

@@ -151,9 +151,19 @@ pub fn cached_stations(config: &Config) -> Vec<Station> {
 }
 
 pub fn current(config: &Config, path: &str) -> Option<Station> {
-    cached_stations(config)
-        .into_iter()
-        .find(|station| station.stream_url == path)
+    find_station(&cached_stations(config), path).cloned()
+}
+
+/// Find a cached station or episode by its playback path. NTS episode URLs are
+/// matched by show/episode even when query strings or trailing slashes differ.
+pub fn find_station<'a>(stations: &'a [Station], path: &str) -> Option<&'a Station> {
+    if let Some(station) = stations.iter().find(|station| station.stream_url == path) {
+        return Some(station);
+    }
+    let wanted = episode_parts(path)?;
+    stations
+        .iter()
+        .find(|station| episode_parts(&station.stream_url) == Some(wanted))
 }
 
 /// Replace the mpv-reported stream URL with the NTS station identity.
@@ -167,8 +177,17 @@ pub fn apply_status(config: &Config, status: &mut crate::mpv::Status) {
 }
 
 pub fn cover(config: &Config, path: &str) -> Option<image::DynamicImage> {
-    let station = current(config, path)?;
-    let cover_path = station.cover_path?;
+    let mut station = current(config, path).or_else(|| queue_episode(config, path))?;
+    let cover_path = match station.cover_path.clone() {
+        Some(path) => path,
+        None => {
+            let url = station.cover_url.as_deref()?;
+            let path = download_cover(config, url)?;
+            station.cover_path = Some(path.clone());
+            save_station(config, &station).ok();
+            path
+        }
+    };
     crate::cover::load_path(&cover_path)
 }
 
@@ -188,7 +207,12 @@ fn save_station(config: &Config, station: &Station) -> Result<()> {
         stations.push(station.clone());
     }
     let text = serde_json::to_vec_pretty(&stations)?;
-    std::fs::write(current_path(config), text).context("writing NTS metadata")
+    // Replace atomically so the panel never reads a partially written sidecar
+    // while a background cover download updates it.
+    let path = current_path(config);
+    let temporary = path.with_extension("json.tmp");
+    std::fs::write(&temporary, text).context("writing NTS metadata")?;
+    std::fs::rename(&temporary, &path).context("replacing NTS metadata")
 }
 
 fn download_cover(config: &Config, url: &str) -> Option<PathBuf> {
@@ -216,8 +240,20 @@ fn download_cover(config: &Config, url: &str) -> Option<PathBuf> {
 }
 
 fn curl_json(url: &str) -> Result<Value> {
+    curl_json_with_timeout(url, 15)
+}
+
+fn curl_json_with_timeout(url: &str, seconds: u64) -> Result<Value> {
+    let max_time = seconds.to_string();
     let output = Command::new("curl")
-        .args(["-fsSL", "--max-time", "15", "-A", "lilt/0.1", url])
+        .args([
+            "-fsSL",
+            "--max-time",
+            max_time.as_str(),
+            "-A",
+            "lilt/0.1",
+            url,
+        ])
         .output()
         .context("running curl (needed for NTS metadata)")?;
     if !output.status.success() {
@@ -352,6 +388,108 @@ fn mixtape_from_value(value: &Value) -> Option<Station> {
     })
 }
 
+/// Whether `input` is an NTS show episode page (not a live/mixtape stream).
+pub fn is_episode_url(input: &str) -> bool {
+    episode_parts(input).is_some()
+}
+
+/// Resolve an NTS episode page through the public API and cache its display
+/// metadata. Best effort: on failure playback still proceeds via yt-dlp.
+pub fn queue_episode(config: &Config, url: &str) -> Option<Station> {
+    let (show, episode) = episode_parts(url)?;
+    if let Some(station) = current(config, url) {
+        return Some(station);
+    }
+
+    let api = format!("https://www.nts.live/api/v2/shows/{show}/episodes/{episode}");
+    let data = curl_json_with_timeout(&api, 6).ok()?;
+    let show_name = show_name(show).unwrap_or_else(|| humanize_alias(show));
+    let station = episode_station(show, episode, &show_name, &data)?;
+    save_station(config, &station).ok()?;
+    Some(station)
+}
+
+fn episode_parts(input: &str) -> Option<(&str, &str)> {
+    let rest = input.trim();
+    let rest = rest
+        .strip_prefix("https://")
+        .or_else(|| rest.strip_prefix("http://"))?;
+    let rest = rest.strip_prefix("www.").unwrap_or(rest);
+    let rest = rest.split(['?', '#']).next()?;
+    let mut parts = rest.split('/').filter(|part| !part.is_empty());
+    if parts.next()? != "nts.live" || parts.next()? != "shows" {
+        return None;
+    }
+    let show = parts.next()?;
+    if parts.next()? != "episodes" {
+        return None;
+    }
+    let episode = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((show, episode))
+}
+
+fn canonical_episode_url(show: &str, episode: &str) -> String {
+    format!("https://www.nts.live/shows/{show}/episodes/{episode}")
+}
+
+fn humanize_alias(alias: &str) -> String {
+    alias
+        .split(['-', '_'])
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            chars
+                .next()
+                .map(|first| first.to_uppercase().chain(chars).collect::<String>())
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn show_name(show: &str) -> Option<String> {
+    let api = format!("https://www.nts.live/api/v2/shows/{show}");
+    let data = curl_json_with_timeout(&api, 6).ok()?;
+    let name = decode_html(data.get("name")?.as_str()?);
+    (!name.is_empty()).then_some(name)
+}
+
+fn episode_station(show: &str, episode: &str, show_name: &str, data: &Value) -> Option<Station> {
+    let title = decode_html(data.get("name")?.as_str()?);
+    if title.is_empty() {
+        return None;
+    }
+    let subtitle = decode_html(
+        data.get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    );
+    let media = data.get("media");
+    let cover_url = media
+        .and_then(|media| media.get("picture_medium"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            media
+                .and_then(|media| media.get("picture_large"))
+                .and_then(Value::as_str)
+        });
+
+    Some(Station {
+        key: episode.to_string(),
+        title,
+        subtitle,
+        artist: "NTS".to_string(),
+        album: show_name.trim().to_string(),
+        stream_url: canonical_episode_url(show, episode),
+        cover_url: cover_url.map(str::to_string),
+        cover_path: None,
+        live: false,
+    })
+}
+
 fn fetch_stations() -> Result<Vec<Station>> {
     let mut stations = Vec::new();
     match curl_json(LIVE_API) {
@@ -433,6 +571,88 @@ mod tests {
             station.cover_url.as_deref(),
             Some("https://example.com/mixtape.jpg")
         );
+    }
+
+    #[test]
+    fn parses_episode_urls() {
+        assert_eq!(
+            episode_parts(
+                "https://www.nts.live/shows/blue-screen/episodes/blue-screen-11th-november-2026"
+            ),
+            Some(("blue-screen", "blue-screen-11th-november-2026"))
+        );
+        assert_eq!(
+            episode_parts("http://nts.live/shows/a/episodes/b/?utm_source=x#top"),
+            Some(("a", "b"))
+        );
+        assert!(!is_episode_url("https://www.nts.live/shows/blue-screen"));
+        assert!(!is_episode_url(
+            "https://www.nts.live/shows/a/episodes/b/extra"
+        ));
+        assert!(!is_episode_url("https://example.com/shows/a/episodes/b"));
+        assert!(!is_episode_url("slow-focus"));
+    }
+
+    #[test]
+    fn parses_episode_metadata() {
+        let data = json!({
+            "name": "Blue Screen w/ Jim Jarmusch & Jozef Van Wissem ",
+            "description": "A show &amp; more",
+            "media": {"picture_medium": "https://example.com/episode.jpg"}
+        });
+        let station = episode_station(
+            "blue-screen",
+            "blue-screen-11th-november-2026",
+            "Blue Screen ",
+            &data,
+        )
+        .expect("episode");
+
+        assert_eq!(
+            station.title,
+            "Blue Screen w/ Jim Jarmusch & Jozef Van Wissem"
+        );
+        assert_eq!(station.artist, "NTS");
+        assert_eq!(station.album, "Blue Screen");
+        assert_eq!(station.subtitle, "A show & more");
+        assert_eq!(station.key, "blue-screen-11th-november-2026");
+        assert_eq!(
+            station.stream_url,
+            "https://www.nts.live/shows/blue-screen/episodes/blue-screen-11th-november-2026"
+        );
+        assert_eq!(
+            station.cover_url.as_deref(),
+            Some("https://example.com/episode.jpg")
+        );
+    }
+
+    #[test]
+    fn matches_episode_url_variants() {
+        let data = json!({"name": "Blue Screen"});
+        let station = episode_station(
+            "blue-screen",
+            "blue-screen-11th-november-2026",
+            "Blue Screen",
+            &data,
+        )
+        .expect("episode");
+        let stations = vec![station];
+
+        assert_eq!(
+            find_station(
+                &stations,
+                "https://nts.live/shows/blue-screen/episodes/blue-screen-11th-november-2026/?utm_source=copy#top"
+            )
+            .map(|station| station.title.as_str()),
+            Some("Blue Screen")
+        );
+        assert!(find_station(&stations, "https://example.com/other").is_none());
+    }
+
+    #[test]
+    fn humanizes_show_aliases() {
+        assert_eq!(humanize_alias("blue-screen"), "Blue Screen");
+        assert_eq!(humanize_alias("4-to-the-floor"), "4 To The Floor");
     }
 
     #[test]

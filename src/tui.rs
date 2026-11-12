@@ -446,10 +446,7 @@ impl App {
             .map(|(index, entry)| {
                 let current = index as i64 == self.status.playlist_pos;
                 let marker = if current { "●" } else { " " };
-                let name = if let Some(station) = nts
-                    .iter()
-                    .find(|station| station.stream_url == entry.filename)
-                {
+                let name = if let Some(station) = nts::find_station(&nts, &entry.filename) {
                     station.title.clone()
                 } else {
                     entry

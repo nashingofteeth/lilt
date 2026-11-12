@@ -81,6 +81,8 @@ overlay. Keep them short, accurate, and in sync with the README.
   `cache_dir/covers`; playlist entries get per-video thumbnails.
 - NTS Radio station/show metadata and artwork come from the public NTS API via
   `curl`; keep resolution and the current-station sidecar in `src/nts.rs`.
+  Episode page URLs use the show/episode API for display metadata; playback
+  still goes through mpv/yt-dlp.
 - Surface mpv playback failures from `end-file` events and the mpv log.
 
 ## Style

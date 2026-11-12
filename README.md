@@ -150,6 +150,11 @@ Playing pane and cover. Live streams are URL-only, so the rclone mount is not
 required. When the library is unmounted, the pickers still offer NTS plus a
 `[local library]` entry that mounts on demand.
 
+Episode pages are resolved through the same API: playing
+`https://www.nts.live/shows/blue-screen/episodes/...` shows `NTS — Blue Screen`
+and the episode title instead of the uploader name that yt-dlp reports, while
+mpv still handles the actual audio stream.
+
 YouTube playback is audio-only (`--ytdl-format=bestaudio/best`), and playlist
 URLs expand into separate queue entries. URL-only playback does not require the
 rclone mount. Cover art for URL sources is the thumbnail fetched with `yt-dlp`
