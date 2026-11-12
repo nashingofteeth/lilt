@@ -303,7 +303,7 @@ fn display_artist(artist: &str, album_artist: &str) -> String {
     }
 }
 
-pub const AUDIO_CLIENT_NAME: &str = "music";
+pub const AUDIO_CLIENT_NAME: &str = "lilt";
 
 pub fn args(config: &Config) -> Vec<String> {
     let mut args = vec![

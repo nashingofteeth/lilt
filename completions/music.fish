@@ -1,4 +1,4 @@
-# Fish completions for music(1).
+# Fish completions for music(1) (lilt alias).
 complete -c music -f
 
 set -l __music_commands \

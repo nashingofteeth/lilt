@@ -20,7 +20,7 @@ use std::process::exit;
 use config::Config;
 
 #[derive(Parser, Debug)]
-#[command(name = "music", version, about = "mpv music player wrapper")]
+#[command(name = "lilt", version, about = "mpv music player wrapper")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -103,7 +103,7 @@ fn main() {
     }
 
     if let Err(error) = run() {
-        eprintln!("music: {error:#}");
+        eprintln!("lilt: {error:#}");
         exit(1);
     }
 }
@@ -191,7 +191,7 @@ mod fuzz_tests {
         let mut rng = Rng::new(0xC0FFEE);
 
         for _ in 0..cases(2_000) {
-            let mut args = vec!["music".to_string()];
+            let mut args = vec!["lilt".to_string()];
             for _ in 0..rng.below(7) {
                 if rng.boolean() {
                     let word: &str = rng.pick(&pool);

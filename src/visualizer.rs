@@ -603,15 +603,15 @@ Sink Input #42
     #[test]
     fn finds_sink_input_for_process() {
         assert_eq!(
-            parse_sink_input_index(SINK_INPUTS, "", Some(1234), "music"),
+            parse_sink_input_index(SINK_INPUTS, "", Some(1234), "lilt"),
             Some(41)
         );
         assert_eq!(
-            parse_sink_input_index(SINK_INPUTS, "", Some(999), "music"),
+            parse_sink_input_index(SINK_INPUTS, "", Some(999), "lilt"),
             Some(42)
         );
         assert_eq!(
-            parse_sink_input_index(SINK_INPUTS, "", Some(1), "music"),
+            parse_sink_input_index(SINK_INPUTS, "", Some(1), "lilt"),
             None
         );
     }
@@ -620,7 +620,7 @@ Sink Input #42
     fn accepts_unquoted_sink_input_pid() {
         let listing = "Sink Input #7\napplication.process.id = 55\n";
         assert_eq!(
-            parse_sink_input_index(listing, "", Some(55), "music"),
+            parse_sink_input_index(listing, "", Some(55), "lilt"),
             Some(7)
         );
     }
@@ -630,12 +630,12 @@ Sink Input #42
         let listing = "\
 Sink Input #9
 \tProperties:
-\t\tapplication.name = \"music\"
-\t\tapplication.id = \"music\"
+\t\tapplication.name = \"lilt\"
+\t\tapplication.id = \"lilt\"
 ";
-        assert_eq!(parse_sink_input_index(listing, "", None, "music"), Some(9));
+        assert_eq!(parse_sink_input_index(listing, "", None, "lilt"), Some(9));
         assert_eq!(
-            parse_sink_input_index(listing, "", Some(1234), "music"),
+            parse_sink_input_index(listing, "", Some(1234), "lilt"),
             Some(9)
         );
         assert_eq!(parse_sink_input_index(listing, "", None, "mpv"), None);
@@ -646,14 +646,14 @@ Sink Input #9
         let listing = "\
 Sink Input #8
 \tProperties:
-\t\tapplication.name = \"music\"
+\t\tapplication.name = \"lilt\"
 Sink Input #9
 \tProperties:
-\t\tapplication.name = \"music\"
+\t\tapplication.name = \"lilt\"
 \t\tapplication.process.id = \"1234\"
 ";
         assert_eq!(
-            parse_sink_input_index(listing, "", Some(1234), "music"),
+            parse_sink_input_index(listing, "", Some(1234), "lilt"),
             Some(9)
         );
     }
@@ -676,7 +676,7 @@ Sink Input #9
 \t\tapplication.name = \"mpv\"
 ";
         assert_eq!(
-            parse_sink_input_index(listing, CLIENTS, Some(1234), "music"),
+            parse_sink_input_index(listing, CLIENTS, Some(1234), "lilt"),
             Some(9)
         );
     }
@@ -690,7 +690,7 @@ Sink Input #10
 \t\tapplication.name = \"mpv\"
 ";
         assert_eq!(
-            parse_sink_input_index(listing, CLIENTS, Some(5678), "music"),
+            parse_sink_input_index(listing, CLIENTS, Some(5678), "lilt"),
             Some(10)
         );
     }

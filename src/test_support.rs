@@ -75,7 +75,7 @@ pub fn unique_base(label: &str) -> PathBuf {
         env::temp_dir()
     };
     let base = root.join(format!(
-        "music-{label}-{}-{}",
+        "lilt-{label}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

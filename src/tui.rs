@@ -56,7 +56,7 @@ pub fn run(config: &Config) -> Result<()> {
     app.refresh();
 
     let mut terminal = ratatui::try_init().context("initializing terminal")?;
-    let _ = execute!(std::io::stdout(), SetTitle("music controls"));
+    let _ = execute!(std::io::stdout(), SetTitle("lilt controls"));
     let _guard = TermGuard;
 
     // Query before the event loop so terminal responses are not mistaken for
@@ -1239,7 +1239,7 @@ impl App {
 
         if !self.mounted && !self.external_only_queue() {
             frame.render_widget(
-                Paragraph::new("library not mounted — run `music mount`")
+                Paragraph::new("library not mounted — run `lilt mount`")
                     .style(Style::default().fg(Color::Yellow)),
                 area,
             );

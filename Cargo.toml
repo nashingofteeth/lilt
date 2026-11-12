@@ -1,9 +1,13 @@
 [package]
-name = "music"
+name = "lilt-player"
 version = "0.1.0"
 edition = "2024"
-description = "mpv music player wrapper with an rclone mount and a TUI"
+description = "Lilt: mpv music player wrapper with an rclone mount and a TUI"
 license = "MIT"
+
+[[bin]]
+name = "lilt"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"

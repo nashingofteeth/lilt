@@ -108,7 +108,7 @@ pub fn unmount(dir: &Path) -> Result<()> {
         std::thread::sleep(Duration::from_millis(200));
     }
 
-    println!("music: normal unmount failed, trying lazy unmount");
+    println!("lilt: normal unmount failed, trying lazy unmount");
     let status = Command::new("fusermount3")
         .arg("-uz")
         .arg(dir)
@@ -139,7 +139,7 @@ pub fn unmount(dir: &Path) -> Result<()> {
         std::thread::sleep(Duration::from_millis(200));
     }
 
-    println!("music: normal unmount failed, trying force unmount");
+    println!("lilt: normal unmount failed, trying force unmount");
     let status = Command::new("diskutil")
         .args(["unmount", "force"])
         .arg(dir)

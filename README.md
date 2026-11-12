@@ -1,4 +1,4 @@
-# music
+# Lilt
 
 A Rust wrapper around [mpv](https://mpv.io/) for playing a music library that
 lives behind an [rclone](https://rclone.org/) mount.
@@ -18,9 +18,9 @@ keys and MPRIS panels work too.
 ## Requirements
 
 - `mpv`, `rclone`
-- `fzf` for `music browse`
+- `fzf` for `lilt browse`
 - `yt-dlp` for YouTube playback and thumbnail covers
-- `tail` for `music logs -f`
+- `tail` for `lilt logs -f`
 - optional: `mpv-mpris` for hardware media keys (Linux)
 
 Linux:
@@ -56,9 +56,9 @@ The platform-specific process and mount helpers live in `src/platform.rs`.
 
 ```sh
 cargo build --release
-./target/release/music --help
+./target/release/lilt --help
 
-# Install `music` (into ~/.cargo/bin, or ~/.local/bin when that is not on PATH)
+# Install `lilt` (into ~/.cargo/bin, or ~/.local/bin when that is not on PATH)
 ./scripts/install.sh
 
 # Format, lint, and test
@@ -76,69 +76,69 @@ Use `FUZZ_CASES=50000 ./scripts/fuzz.sh` for a longer run.
 On macOS, `brew install mpv fzf`, install FUSE-T and `audia-tap` (see
 Requirements), and put the official rclone binary ahead of Homebrew's on `PATH`
 (for example in `~/.local/bin`). The Homebrew rclone build has no `mount`
-support, so `music mount`/`play` would otherwise fail.
+support, so `lilt mount`/`play` would otherwise fail.
 
 ## Usage
 
-`music mount` mounts the library in the foreground (`Ctrl-C` unmounts). `music`
-or `music help` shows the command list.
+`lilt mount` mounts the library in the foreground (`Ctrl-C` unmounts). `lilt`
+or `lilt help` shows the command list.
 
 ```
 Library
-  music mount                    Mount in the foreground
-  music unmount                  Quit mpv, then unmount the library
-  music status                   Mount state + now playing
+  lilt mount                    Mount in the foreground
+  lilt unmount                  Quit mpv, then unmount the library
+  lilt status                   Mount state + now playing
 
 Playback
-  music play [SOURCE...] [--shuffle]
+  lilt play [SOURCE...] [--shuffle]
                                  Replace the queue. No SOURCE = whole library shuffled
-  music add SOURCE...            Append local paths or URLs
-  music browse                   Pick artists and albums with fzf
-  music queue                    List the queue, current track marked
-  music open                     Open the playing URL or reveal the local file
-  music toggle | pause | resume
-  music next | prev | stop
-  music mute [on|off|toggle]
-  music jump N
-  music volume N|+N|-N
-  music seek N|-N|N%
-  music shuffle [on|off|toggle]
-  music repeat [off|all|one]
-  music controls                 Full-screen control panel
-  music quit                     Stop and exit mpv
-  music restart                  Quit mpv and unmount the library
-  music logs [-f]                Tail rclone/mpv logs
+  lilt add SOURCE...            Append local paths or URLs
+  lilt browse                   Pick artists and albums with fzf
+  lilt queue                    List the queue, current track marked
+  lilt open                     Open the playing URL or reveal the local file
+  lilt toggle | pause | resume
+  lilt next | prev | stop
+  lilt mute [on|off|toggle]
+  lilt jump N
+  lilt volume N|+N|-N
+  lilt seek N|-N|N%
+  lilt shuffle [on|off|toggle]
+  lilt repeat [off|all|one]
+  lilt controls                 Full-screen control panel
+  lilt quit                     Stop and exit mpv
+  lilt restart                  Quit mpv and unmount the library
+  lilt logs [-f]                Tail rclone/mpv logs
 ```
 
-`music queue` prints one numbered track per line, with `>` marking the current
-track; `music list` is an alias. `music resume` and `music toggle` restart the
+`lilt queue` prints one numbered track per line, with `>` marking the current
+track; `lilt list` is an alias. `lilt resume` and `lilt toggle` restart the
 queue from the beginning when playback has ended.
 
-`music shuffle on` reorders the existing queue while keeping the current track.
-`music shuffle off` disables randomization, restores the original queue order,
-and keeps the current track playing; `music play --shuffle` randomizes a newly
+`lilt shuffle on` reorders the existing queue while keeping the current track.
+`lilt shuffle off` disables randomization, restores the original queue order,
+and keeps the current track playing; `lilt play --shuffle` randomizes a newly
 loaded queue. The TUI `s` key uses the same behavior.
 
 A local `SOURCE` may be absolute, relative to the current directory, or relative
-to the music mount — so `music play "Brian Eno"` and
-`music play "Brian Eno/Ambient 1"` both work. Matching falls back to a
+to the music mount — so `lilt play "Brian Eno"` and
+`lilt play "Brian Eno/Ambient 1"` both work. Matching falls back to a
 case-insensitive search under the mount.
 
 `SOURCE` may also be any URL mpv supports, and `play` accepts multiple sources:
 
 ```sh
-music play 'https://www.youtube.com/watch?v=...'
-music play 'https://www.youtube.com/playlist?list=...'
-music add 'https://example.com/stream.mp3' 'https://youtu.be/...'
+lilt play 'https://www.youtube.com/watch?v=...'
+lilt play 'https://www.youtube.com/playlist?list=...'
+lilt add 'https://example.com/stream.mp3' 'https://youtu.be/...'
 ```
 
 YouTube playback is audio-only (`--ytdl-format=bestaudio/best`), and playlist
 URLs expand into separate queue entries. URL-only playback does not require the
 rclone mount. Cover art for URL sources is the thumbnail fetched with `yt-dlp`
-and cached under `~/.cache/music/covers`; playlist entries get their own
+and cached under `~/.cache/lilt/covers`; playlist entries get their own
 thumbnail.
 
-When mpv rejects a URL or yt-dlp fails, `music play` exits non-zero and prints
+When mpv rejects a URL or yt-dlp fails, `lilt play` exits non-zero and prints
 the mpv error plus relevant lines from `mpv.log`.
 
 `browse` returns as soon as you make a selection: it hands the queue to the
@@ -146,7 +146,7 @@ detached mpv daemon and exits, so the picker window closes immediately.
 
 ### Control panel
 
-`music controls` is a ratatui UI with three panes:
+`lilt controls` is a ratatui UI with three panes:
 
 - **Now Playing** — artist/album, title, progress, volume/shuffle/repeat.
 - **Spectrum** — live bars from the music player’s output (`v` toggles it).
@@ -167,8 +167,8 @@ stall the UI. While art is loading or unavailable, the same area shows a small
 placeholder. Tracks without a title tag show their file path instead of a
 guessed title.
 
-If the mpv daemon exits (`music quit`, `music unmount`, or `music restart`), the
-panel closes automatically after a short grace period. `music stop` leaves it
+If the mpv daemon exits (`lilt quit`, `lilt unmount`, or `lilt restart`), the
+panel closes automatically after a short grace period. `lilt stop` leaves it
 open.
 
 **Common keys**
@@ -221,7 +221,7 @@ open.
 The spectrum pane captures the **mpv stream only** on Linux: it matches the mpv
 daemon PID in `pactl list sink-inputs`, then runs
 `parec --monitor-stream=<index>`. The daemon runs with
-`--audio-client-name=music`, and its PID is also resolved through PipeWire’s
+`--audio-client-name=lilt`, and its PID is also resolved through PipeWire’s
 client entry when the stream properties omit it. Bars stop when the music stops
 and other apps do not affect them. `v` toggles it, and it is hidden below 20
 terminal rows.
@@ -230,7 +230,7 @@ recording a monitor source will make it system-wide again.
 
 On macOS the pane taps the **mpv process** with `audia-tap` instead. mpv keeps
 playing to whatever the system output is (AirPods, speakers, …), so there is no
-Multi-Output device or routing change, and the bars only react to `music`. The
+Multi-Output device or routing change, and the bars only react to `lilt`. The
 first capture prompts for System Audio Recording; `audia-tap` runs a small
 permission agent from its app bundle. If it is not installed, the pane stays
 unavailable.
@@ -238,7 +238,7 @@ unavailable.
 To use the `ffmpeg` + BlackHole fallback instead, set
 `capture_device = "BlackHole 2ch"` (or an AVFoundation audio index) and create a
 Multi-Output device containing BlackHole and the output you listen on.
-`MUSIC_CAPTURE_DEVICE` overrides `capture_device`. The fallback captures
+`LILT_CAPTURE_DEVICE` overrides `capture_device`; the legacy `MUSIC_CAPTURE_DEVICE` still works during migration. The fallback captures
 whatever is sent to BlackHole, so route mpv through that Multi-Output with
 `mpv_extra_args = ["--audio-device=coreaudio/<device-id>"]` (find the id with
 `mpv --audio-device=help`).
@@ -248,7 +248,7 @@ and restores the terminal on exit.
 
 ## Configuration
 
-Configuration lives in `~/.config/music/config.toml` (managed by chezmoi in
+Configuration lives in `~/.config/lilt/config.toml` (managed by chezmoi in
 this setup):
 
 ```toml
@@ -257,10 +257,12 @@ remote = "sam:/Volumes/NASH_SYNC/music/library"
 mpv_extra_args = []
 ```
 
-`MUSIC_DIR` and `MUSIC_REMOTE` environment variables override the file.
+`LILT_DIR` and `LILT_REMOTE` environment variables override the file.
 `music_dir` falls back to `~/Music` if omitted; `remote` is required.
 `mpv_extra_args` is appended to the daemon's mpv command line (useful for
-testing with `--ao=null`).
+testing with `--ao=null`). During migration, Lilt falls back to
+`~/.config/music/config.toml` and the legacy `MUSIC_*` environment variables.
+The installer also creates a temporary `music` alias and fish completions for it.
 
 ### Gapless playback
 
@@ -289,8 +291,8 @@ would be a local rclone VFS cache rather than larger demux buffers.
   audio-extension allowlist (hidden files and AppleDouble `._*` sidecars are
   skipped); whole-library shuffle lets mpv expand the directory asynchronously
 - state lives outside the repo:
-  - socket: `${XDG_RUNTIME_DIR:-/tmp}/music-mount-$UID/mpv.sock`
-  - logs and pid files: `~/.cache/music/`
+  - socket: `${XDG_RUNTIME_DIR:-/tmp}/lilt-mount-$UID/mpv.sock`
+  - logs and pid files: `~/.cache/lilt/`
 
 ## Desktop integration (Linux/niri)
 
@@ -298,13 +300,13 @@ Example [niri](https://github.com/YaLTeR/niri) binding that focuses an existing
 controls window or opens one as a normal tiled window:
 
 ```kdl
-Mod+M { spawn-sh "~/.config/niri/focus-or-spawn-music.sh"; }
+Mod+M { spawn-sh "~/.config/niri/focus-or-spawn-lilt.sh"; }
 ```
 
 The helper wraps:
 
 ```sh
-ghostty --class=com.mitchellh.ghostty.music -e "$(command -v music)" controls
+ghostty --class=com.mitchellh.ghostty.lilt -e "$(command -v lilt)" controls
 ```
 
 No window rule is needed, so it tiles like any other window.

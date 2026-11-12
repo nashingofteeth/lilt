@@ -2,9 +2,10 @@
 
 ## Project
 
-`music` is a Rust wrapper around a detached, audio-only `mpv` daemon. The CLI
-and the ratatui control panel (`music controls`) are two front ends for the same
-queue and playback state.
+`lilt` is a Rust wrapper around a detached, audio-only `mpv` daemon. The CLI
+and the ratatui control panel (`lilt controls`) are two front ends for the same
+queue and playback state. The installed binary is `lilt`; a temporary `music`
+alias and legacy config/env fallbacks exist for migration.
 
 Linux and macOS are supported. Keep OS-specific process and mount commands in
 `src/platform.rs` instead of spreading `cfg` blocks through the rest of the
@@ -22,11 +23,11 @@ cargo fmt
 ./scripts/check.sh                 # fmt --check, clippy -D warnings, tests
 FUZZ_CASES=20000 ./scripts/fuzz.sh # property/fuzz tests
 cargo build --release
-./scripts/install.sh               # install to ~/.cargo/bin
+./scripts/install.sh               # install lilt to ~/.cargo/bin
 ```
 
 Run `./scripts/check.sh` and a fuzz pass before every commit. Install the
-binary after behavior changes so the local `music` command matches the source.
+binary after behavior changes so the local `lilt` command matches the source.
 
 ## CLI/TUI parity (required)
 
@@ -38,7 +39,7 @@ in the same change, then update all of:
 - `src/player.rs` shared implementation
 - `src/tui.rs` key handling and footer hints
 - `README.md` CLI command list and TUI key tables
-- `completions/music.fish`
+- `completions/lilt.fish` (and the temporary `music.fish` alias)
 - `tests/fuzz_cli.rs` for new CLI commands
 
 Current playback/queue mapping:

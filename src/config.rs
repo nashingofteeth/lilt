@@ -3,8 +3,9 @@ use serde::Deserialize;
 use std::env;
 use std::path::{Path, PathBuf};
 
-/// Runtime configuration, derived from ~/.config/music/config.toml plus
-/// MUSIC_DIR / MUSIC_REMOTE environment overrides.
+/// Runtime configuration, derived from ~/.config/lilt/config.toml plus
+/// LILT_DIR / LILT_REMOTE environment overrides. Falls back to the legacy
+/// ~/.config/music and MUSIC_* variables during migration.
 #[derive(Debug, Clone)]
 pub struct Config {
     pub music_dir: PathBuf,
@@ -38,7 +39,15 @@ impl Config {
         let config_home = env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".config"));
-        let config_path = config_home.join("music").join("config.toml");
+        let config_path = config_home.join("lilt").join("config.toml");
+        let legacy_path = config_home.join("music").join("config.toml");
+        let config_path = if config_path.is_file() {
+            config_path
+        } else if legacy_path.is_file() {
+            legacy_path
+        } else {
+            config_path
+        };
 
         let file = if config_path.is_file() {
             let text = std::fs::read_to_string(&config_path)
@@ -49,31 +58,34 @@ impl Config {
             FileConfig::default()
         };
 
-        let music_dir = env::var("MUSIC_DIR")
+        let music_dir = env::var("LILT_DIR")
             .ok()
+            .or_else(|| env::var("MUSIC_DIR").ok())
             .or(file.music_dir)
             .map(|s| expand_tilde(&s, &home))
             .unwrap_or_else(|| home.join("Music"));
 
-        let remote = env::var("MUSIC_REMOTE")
+        let remote = env::var("LILT_REMOTE")
             .ok()
+            .or_else(|| env::var("MUSIC_REMOTE").ok())
             .or(file.remote)
-            .context("music remote not configured; set `remote` in ~/.config/music/config.toml")?;
+            .context("remote not configured; set `remote` in ~/.config/lilt/config.toml")?;
 
-        let capture_device = env::var("MUSIC_CAPTURE_DEVICE")
+        let capture_device = env::var("LILT_CAPTURE_DEVICE")
             .ok()
+            .or_else(|| env::var("MUSIC_CAPTURE_DEVICE").ok())
             .or(file.capture_device);
 
         let runtime_base = env::var_os("XDG_RUNTIME_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/tmp"));
         let uid = unsafe { libc::getuid() };
-        let runtime_dir = runtime_base.join(format!("music-mount-{uid}"));
+        let runtime_dir = runtime_base.join(format!("lilt-mount-{uid}"));
 
         let cache_base = env::var_os("XDG_CACHE_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".cache"));
-        let cache_dir = cache_base.join("music");
+        let cache_dir = cache_base.join("lilt");
 
         Ok(Self {
             music_dir,

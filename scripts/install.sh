@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and install the `music` binary (same pattern as nile).
+# Build and install the `lilt` binary (same pattern as nile).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -16,4 +16,5 @@ else
 fi
 
 cargo install --locked --force --path . --root "$root"
-echo "installed $root/bin/music"
+ln -sfn lilt "$root/bin/music"
+echo "installed $root/bin/lilt (temporary music alias)"

@@ -36,7 +36,7 @@ fn unique_base() -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let base = std::env::temp_dir().join(format!("music-cli-fuzz-{}-{nanos}", std::process::id()));
+    let base = std::env::temp_dir().join(format!("lilt-cli-fuzz-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&base).unwrap();
     base
 }
@@ -48,7 +48,7 @@ fn fuzz_safe_cli_execution_never_panics() {
         .and_then(|value| value.parse().ok())
         .unwrap_or(200usize)
         .min(2_000);
-    let exe = env!("CARGO_BIN_EXE_music");
+    let exe = env!("CARGO_BIN_EXE_lilt");
     let base = unique_base();
     let music_dir = base.join("Music");
     let runtime = base.join("runtime");
@@ -57,9 +57,9 @@ fn fuzz_safe_cli_execution_never_panics() {
     for dir in [&music_dir, &runtime, &cache, &config] {
         std::fs::create_dir_all(dir).unwrap();
     }
-    std::fs::create_dir_all(config.join("music")).unwrap();
+    std::fs::create_dir_all(config.join("lilt")).unwrap();
     std::fs::write(
-        config.join("music/config.toml"),
+        config.join("lilt/config.toml"),
         format!(
             "music_dir = {:?}\nremote = \"test:\"\n",
             music_dir.display().to_string()
@@ -107,22 +107,22 @@ fn fuzz_safe_cli_execution_never_panics() {
 
         let output = Command::new(exe)
             .args(&args)
-            .env("MUSIC_DIR", &music_dir)
+            .env("LILT_DIR", &music_dir)
             .env("XDG_RUNTIME_DIR", &runtime)
             .env("XDG_CACHE_HOME", &cache)
             .env("XDG_CONFIG_HOME", &config)
             .output()
-            .expect("spawn music");
+            .expect("spawn lilt");
 
         assert_ne!(
             output.status.code(),
             Some(101),
-            "music panicked for args {args:?}"
+            "lilt panicked for args {args:?}"
         );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             !stderr.contains("panicked"),
-            "music panicked for args {args:?}:\n{stderr}"
+            "lilt panicked for args {args:?}:\n{stderr}"
         );
     }
 

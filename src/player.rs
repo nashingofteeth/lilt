@@ -247,7 +247,7 @@ fn load_inputs(config: &Config, inputs: &[queue::Input], shuffle: bool) -> Resul
 
 pub fn add(config: &Config, inputs: &[String]) -> Result<()> {
     if inputs.is_empty() {
-        bail!("usage: music add PATH|URL...");
+        bail!("usage: lilt add PATH|URL...");
     }
     let sources = inputs
         .iter()
@@ -329,7 +329,7 @@ fn wait_for_loaded(client: &mut Mpv, timeout: Duration) -> Result<()> {
             return Ok(());
         }
         if start.elapsed() >= timeout {
-            bail!("timed out waiting for mpv to load source (see music logs)");
+            bail!("timed out waiting for mpv to load source (see lilt logs)");
         }
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -468,7 +468,7 @@ pub fn mute(config: &Config, mode: Option<&str>) -> Result<()> {
         "on" | "yes" | "true" => set_bool(&mut client, "mute", true),
         "off" | "no" | "false" => set_bool(&mut client, "mute", false),
         "toggle" => client.command(&["cycle", "mute"]),
-        other => bail!("usage: music mute [on|off|toggle] (got {other})"),
+        other => bail!("usage: lilt mute [on|off|toggle] (got {other})"),
     }
 }
 
@@ -540,7 +540,7 @@ pub fn shuffle(config: &Config, mode: Option<&str>) -> Result<()> {
         "on" | "yes" | "true" => set_shuffle_client(&mut client, true),
         "off" | "no" | "false" => set_shuffle_client(&mut client, false),
         "toggle" => toggle_shuffle_client(&mut client),
-        other => bail!("usage: music shuffle [on|off|toggle] (got {other})"),
+        other => bail!("usage: lilt shuffle [on|off|toggle] (got {other})"),
     }
 }
 
@@ -568,8 +568,8 @@ pub fn repeat(config: &Config, mode: Option<&str>) -> Result<()> {
         Some("off" | "no") => Repeat::Off,
         Some("all") => Repeat::All,
         Some("one") => Repeat::One,
-        None => bail!("usage: music repeat [off|all|one]"),
-        Some(other) => bail!("usage: music repeat [off|all|one] (got {other})"),
+        None => bail!("usage: lilt repeat [off|all|one]"),
+        Some(other) => bail!("usage: lilt repeat [off|all|one] (got {other})"),
     };
     set_repeat(&mut client, repeat)
 }
