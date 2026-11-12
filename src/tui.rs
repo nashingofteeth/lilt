@@ -1113,15 +1113,20 @@ impl App {
         } else {
             ""
         };
-        let muted = if self.status.mute { "   muted" } else { "" };
+        // Keep the mute state at the start of the line. The now-playing pane
+        // narrows for wide covers, and a trailing "muted" can be clipped.
+        let volume = if self.status.mute {
+            "muted".to_string()
+        } else {
+            format!("vol {:.0}%", self.status.volume.floor())
+        };
         let state = format!(
-            "vol {:.0}%   shuffle {}   repeat {}{}{}{}",
-            self.status.volume.floor(),
+            "{}   shuffle {}   repeat {}{}{}",
+            volume,
             if self.status.shuffle { "on" } else { "off" },
             player::repeat_label(self.status.repeat),
             queue,
-            buffering,
-            muted
+            buffering
         );
         frame.render_widget(
             Paragraph::new(state).style(Style::default().fg(Color::DarkGray)),
@@ -1168,10 +1173,15 @@ impl App {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        let (bands, available) = match &self.visualizer {
+        let (mut bands, available) = match &self.visualizer {
             Some(visualizer) => (visualizer.bands(), visualizer.available()),
             None => (Vec::new(), false),
         };
+        // The audio tap has noticeable buffering latency. Reflect mute
+        // immediately instead of waiting for the captured audio to drain.
+        if self.status.mute {
+            bands.fill(0.0);
+        }
         render_spectrum(frame, inner, &bands, available);
     }
 
