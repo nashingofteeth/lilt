@@ -477,19 +477,6 @@ pub fn jump(config: &Config, number: usize) -> Result<()> {
     jump_index(&mut client, number)
 }
 
-pub fn first(config: &Config) -> Result<()> {
-    jump(config, 1)
-}
-
-pub fn last(config: &Config) -> Result<()> {
-    let mut client = connect(config)?;
-    let count = queue_count(&mut client)?;
-    if count <= 0 {
-        bail!("queue empty");
-    }
-    jump_index(&mut client, count as usize)
-}
-
 fn queue_count(client: &mut Mpv) -> Result<i64> {
     Ok(client
         .get("playlist-count")

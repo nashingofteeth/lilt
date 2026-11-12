@@ -99,7 +99,7 @@ Playback
   music toggle | pause | resume
   music next | prev | stop
   music mute [on|off|toggle]
-  music jump N | first | last
+  music jump N
   music volume N|+N|-N
   music seek N|-N|N%
   music shuffle [on|off|toggle]
@@ -197,7 +197,6 @@ open.
 | Key | Action |
 | --- | --- |
 | `j` / `k` | next / previous track |
-| `g` / `gg` / `G` | first track / first track / last track |
 | `←` / `→` | seek −10s / +10s |
 | `↑` / `↓` | volume +5 / −5 |
 
@@ -206,18 +205,15 @@ open.
 | Key | Action |
 | --- | --- |
 | `j` / `k` | move selection |
-| `g` / `gg` / `G` | first / first / last |
 | `PgUp` / `PgDn` | full-page up / down |
 | `Ctrl-d` / `Ctrl-u` | half-page down / up |
 | `Ctrl-f` / `Ctrl-b` | full-page down / up |
-| `Home` / `End` | first / last |
 | `↑` / `↓` | move selection |
 | `Enter` | switch to the selected track |
 | `Esc` | clear the filter, else focus Now Playing |
 
 - The `/` filter is case-insensitive; `Enter` keeps it, `Esc` clears it, `Ctrl-u` clears the query while editing, and `Backspace` deletes a character.
 - While entering a queue number, `Backspace` edits it and `Esc` cancels.
-- `gg` uses a 500ms pending-`g` state; a single `g` also goes first after the timeout.
 - The picker (fzf) temporarily takes over the terminal, then returns to the panel.
 
 ### Visualizer

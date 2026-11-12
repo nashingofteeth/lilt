@@ -3,7 +3,7 @@ complete -c music -f
 
 set -l __music_commands \
     mount unmount status \
-    play add browse queue list open toggle pause resume next prev stop mute jump first last \
+    play add browse queue list open toggle pause resume next prev stop mute jump \
     volume seek shuffle repeat quit restart controls logs help
 
 complete -c music -n '__fish_use_subcommand' -a mount -d 'Mount the music library'
@@ -23,8 +23,6 @@ complete -c music -n '__fish_use_subcommand' -a prev -d 'Previous queue entry'
 complete -c music -n '__fish_use_subcommand' -a stop -d 'Stop playback'
 complete -c music -n '__fish_use_subcommand' -a mute -d 'Mute, unmute, or toggle mute'
 complete -c music -n '__fish_use_subcommand' -a jump -d 'Jump to a queue number'
-complete -c music -n '__fish_use_subcommand' -a first -d 'Jump to the first queue entry'
-complete -c music -n '__fish_use_subcommand' -a last -d 'Jump to the last queue entry'
 complete -c music -n '__fish_use_subcommand' -a volume -d 'Set or adjust volume'
 complete -c music -n '__fish_use_subcommand' -a seek -d 'Seek in the current track'
 complete -c music -n '__fish_use_subcommand' -a shuffle -d 'Shuffle the queue'

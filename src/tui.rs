@@ -120,7 +120,6 @@ struct App {
     filter_query: String,
     filter_editing: bool,
     filtered: Vec<usize>,
-    pending_g: Option<Instant>,
     number_buffer: String,
     picker: Picker,
     cover_key: Option<CoverKey>,
@@ -155,7 +154,6 @@ impl App {
             filter_query: String::new(),
             filter_editing: false,
             filtered: Vec::new(),
-            pending_g: None,
             number_buffer: String::new(),
             picker: Picker::halfblocks(),
             cover_key: None,
@@ -193,13 +191,6 @@ impl App {
 
             if let Some(action) = self.pending.take() {
                 self.run_pending(terminal, action)?;
-            }
-
-            if let Some(started) = self.pending_g
-                && started.elapsed() >= Duration::from_millis(500)
-            {
-                self.pending_g = None;
-                self.goto_first();
             }
 
             if self.last_poll.elapsed() >= Duration::from_millis(100) {
@@ -487,14 +478,6 @@ impl App {
             return;
         }
 
-        if self.pending_g.is_some() {
-            self.pending_g = None;
-            if key.code == KeyCode::Char('g') {
-                self.goto_first();
-                return;
-            }
-        }
-
         if key.modifiers.is_empty() {
             match key.code {
                 KeyCode::Char(character) if character.is_ascii_digit() => {
@@ -551,14 +534,6 @@ impl App {
             }
             KeyCode::Char('a') if !ctrl => {
                 self.pending = Some(Pending::Add);
-                return;
-            }
-            KeyCode::Char('g') if !ctrl => {
-                self.pending_g = Some(Instant::now());
-                return;
-            }
-            KeyCode::Char('G') if !ctrl => {
-                self.goto_last();
                 return;
             }
             KeyCode::Char('v') if !ctrl => {
@@ -683,7 +658,6 @@ impl App {
             Focus::Queue => Focus::NowPlaying,
         };
         self.filter_editing = false;
-        self.pending_g = None;
     }
 
     fn quit_mpv(&mut self) {
@@ -714,41 +688,6 @@ impl App {
         self.apply_filter();
         self.list_state.select(Some(number - 1));
         self.play_index((number - 1) as i64);
-    }
-
-    fn goto_first(&mut self) {
-        match self.focus {
-            Focus::Queue => {
-                if !self.filtered.is_empty() {
-                    self.list_state.select(Some(0));
-                }
-            }
-            Focus::NowPlaying => self.play_index(0),
-        }
-    }
-
-    fn goto_last(&mut self) {
-        match self.focus {
-            Focus::Queue => {
-                if !self.filtered.is_empty() {
-                    self.list_state.select(Some(self.filtered.len() - 1));
-                }
-            }
-            Focus::NowPlaying => {
-                self.act(|client| {
-                    let count = client
-                        .get("playlist-count")
-                        .ok()
-                        .and_then(|value| value.as_i64())
-                        .unwrap_or(0);
-                    if count > 0 {
-                        client
-                            .command_values(vec![json!("playlist-play-index"), json!(count - 1)])?;
-                    }
-                    Ok(())
-                });
-            }
-        }
     }
 
     fn handle_now_playing(&mut self, key: KeyEvent) {
@@ -917,12 +856,6 @@ impl App {
             }
             KeyCode::Char('f') if ctrl => {
                 self.list_state.select(Some((selected + page).min(len - 1)));
-            }
-            KeyCode::Home => {
-                self.list_state.select(Some(0));
-            }
-            KeyCode::End => {
-                self.list_state.select(Some(len - 1));
             }
             KeyCode::Enter => {
                 let actual = self.filtered[selected] as i64;
@@ -1367,11 +1300,11 @@ fn help_lines(focus: Focus, width: u16) -> Vec<Line<'static>> {
     if width >= 70 {
         match focus {
             Focus::NowPlaying => vec![
-                Line::from("space pause  j/k next/prev  h/l ←/→ seek  -/+ ↑/↓ vol  g/G first/last"),
+                Line::from("space pause  j/k next/prev  h/l 10s  H/L 60s  -/+ vol"),
                 Line::from("s/r/m  x stop  o play  a add  v viz  Tab queue  / filter  f open  q/Q"),
             ],
             Focus::Queue => vec![
-                Line::from("j/k move  g/G first/last  Ctrl-d/u half  Ctrl-f/b page  Enter play"),
+                Line::from("j/k move  Ctrl-d/u half  Ctrl-f/b page  Enter play"),
                 Line::from(
                     "N+Enter/G jump  space pause  x stop  / filter  o/a  v viz  f open  Tab",
                 ),
@@ -1380,11 +1313,11 @@ fn help_lines(focus: Focus, width: u16) -> Vec<Line<'static>> {
     } else {
         match focus {
             Focus::NowPlaying => vec![
-                Line::from("space j/k h/l H/L -/+ g/G"),
+                Line::from("space j/k h/l H/L -/+"),
                 Line::from("s r m x f o/b a v Tab / q/Q"),
             ],
             Focus::Queue => vec![
-                Line::from("j/k g/G ^d/^u ^f/^b Enter"),
+                Line::from("j/k ^d/^u ^f/^b Enter"),
                 Line::from("N+↵/G jump  space x / o a v Tab q/Q"),
             ],
         }
@@ -1758,11 +1691,6 @@ mod layout_fuzz_tests {
                 filter_query: rng.string(20),
                 filter_editing: rng.boolean(),
                 filtered,
-                pending_g: if rng.boolean() {
-                    Some(Instant::now())
-                } else {
-                    None
-                },
                 number_buffer: rng.string(6),
                 picker: Picker::halfblocks(),
                 cover_key: None,
@@ -1936,22 +1864,6 @@ mod key_tests {
 
         app.handle_key(key(KeyCode::Esc));
         assert_eq!(app.focus, Focus::NowPlaying);
-
-        let _ = std::fs::remove_dir_all(&base);
-    }
-
-    #[test]
-    fn gg_and_g_move_to_first_and_last() {
-        let (mut app, base) = app_with_items(&["a", "b", "c"]);
-
-        app.list_state.select(Some(2));
-        app.handle_key(key(KeyCode::Char('g')));
-        assert_eq!(app.list_state.selected(), Some(2));
-        app.handle_key(key(KeyCode::Char('g')));
-        assert_eq!(app.list_state.selected(), Some(0));
-
-        app.handle_key(key(KeyCode::Char('G')));
-        assert_eq!(app.list_state.selected(), Some(2));
 
         let _ = std::fs::remove_dir_all(&base);
     }

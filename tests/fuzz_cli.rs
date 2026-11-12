@@ -81,8 +81,6 @@ fn fuzz_safe_cli_execution_never_panics() {
         "open",
         "mute",
         "jump",
-        "first",
-        "last",
         "volume",
         "seek",
         "shuffle",

@@ -69,10 +69,6 @@ enum Command {
     Mute { mode: Option<String> },
     /// Jump to queue number N (1-based)
     Jump { number: usize },
-    /// Jump to the first queue entry
-    First,
-    /// Jump to the last queue entry
-    Last,
     /// Set or adjust volume (N, +N, -N)
     Volume {
         #[arg(allow_hyphen_values = true)]
@@ -138,8 +134,6 @@ fn run() -> Result<()> {
         Command::Stop => player::stop(&config),
         Command::Mute { mode } => player::mute(&config, mode.as_deref()),
         Command::Jump { number } => player::jump(&config, number),
-        Command::First => player::first(&config),
-        Command::Last => player::last(&config),
         Command::Volume { value } => player::volume(&config, &value),
         Command::Seek { value } => player::seek(&config, &value),
         Command::Shuffle { mode } => player::shuffle(&config, mode.as_deref()),
