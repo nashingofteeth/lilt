@@ -5,6 +5,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use crate::config::Config;
 
@@ -23,12 +24,14 @@ pub struct Visualizer {
     available: Arc<AtomicBool>,
     child: Option<Child>,
     reader: Option<JoinHandle<()>>,
+    tap: bool,
 }
 
 impl Visualizer {
     pub fn start(config: &Config) -> Self {
         let bands = Arc::new(Mutex::new(vec![0.0; BAND_COUNT]));
         let available = Arc::new(AtomicBool::new(false));
+        let tap = cfg!(target_os = "macos") && config.capture_device.is_none();
 
         let Some(mut command) = capture_command(config) else {
             return Self {
@@ -36,6 +39,7 @@ impl Visualizer {
                 available,
                 child: None,
                 reader: None,
+                tap,
             };
         };
 
@@ -51,6 +55,7 @@ impl Visualizer {
                     available,
                     child: None,
                     reader: None,
+                    tap,
                 };
             }
         };
@@ -63,6 +68,7 @@ impl Visualizer {
                 available,
                 child: None,
                 reader: None,
+                tap,
             };
         };
 
@@ -78,6 +84,7 @@ impl Visualizer {
             available,
             child: Some(child),
             reader: Some(reader),
+            tap,
         }
     }
 
@@ -360,15 +367,101 @@ fn parse_device_line(line: &str) -> Option<(usize, &str)> {
 
 impl Drop for Visualizer {
     fn drop(&mut self) {
+        let had_capture = self.child.is_some();
         if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
+            terminate(&mut child, Duration::from_millis(1500));
         }
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
         }
+        if had_capture && self.tap {
+            stop_agent_if_idle();
+        }
     }
 }
+
+/// Ask a capture process to exit and give it time to tear down its audio tap.
+/// SIGKILL can leave the Core Audio process muted after audia-tap exits.
+fn terminate(child: &mut Child, timeout: Duration) {
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+    }
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if start.elapsed() < timeout => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break;
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn stop_agent_if_idle() {
+    // audia-tap's agent can leave a process tap behind when its last client
+    // exits, which keeps the tapped app muted. There is no cleanup command, so
+    // stop the agent once nothing else is using it.
+    let processes: Vec<(u32, String)> = audia_tap_pids()
+        .into_iter()
+        .map(|pid| (pid, process_command(pid)))
+        .collect();
+    if processes.iter().any(|(_, command)| {
+        command.contains("--pid") || command.contains("--app") || command.contains("--via-agent")
+    }) {
+        return;
+    }
+
+    for (pid, command) in &processes {
+        if command.contains("--agent") {
+            unsafe {
+                libc::kill(*pid as libc::pid_t, libc::SIGTERM);
+            }
+        }
+    }
+    for _ in 0..20 {
+        let alive = audia_tap_pids()
+            .into_iter()
+            .any(|pid| process_command(pid).contains("--agent"));
+        if !alive {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn audia_tap_pids() -> Vec<u32> {
+    let Ok(output) = Command::new("pgrep").arg("-x").arg("audia-tap").output() else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.trim().parse().ok())
+        .collect()
+}
+
+#[cfg(target_os = "macos")]
+fn process_command(pid: u32) -> String {
+    Command::new("ps")
+        .args(["-o", "command=", "-p", &pid.to_string()])
+        .output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn stop_agent_if_idle() {}
 
 fn read_loop(
     mut stdout: std::process::ChildStdout,
