@@ -132,6 +132,8 @@ struct App {
     filter_editing: bool,
     filtered: Vec<usize>,
     number_buffer: String,
+    seek_editing: bool,
+    seek_buffer: String,
     picker: Picker,
     cover_key: Option<CoverKey>,
     cover_pending: Option<(CoverKey, Receiver<Option<DynamicImage>>)>,
@@ -166,6 +168,8 @@ impl App {
             filter_editing: false,
             filtered: Vec::new(),
             number_buffer: String::new(),
+            seek_editing: false,
+            seek_buffer: String::new(),
             picker,
             cover_key: None,
             cover_pending: None,
@@ -466,7 +470,7 @@ impl App {
         self.mpv.as_mut()
     }
 
-    fn act<F>(&mut self, action: F)
+    fn act<F>(&mut self, action: F) -> bool
     where
         F: FnOnce(&mut Mpv) -> Result<()>,
     {
@@ -474,9 +478,13 @@ impl App {
             Some(client) => action(client),
             None => Err(anyhow!("mpv is not running")),
         };
-        if let Err(err) = result {
-            self.mpv = None;
-            self.show_message(format!("{err}"));
+        match result {
+            Ok(()) => true,
+            Err(err) => {
+                self.mpv = None;
+                self.show_message(format!("{err}"));
+                false
+            }
         }
     }
 
@@ -493,11 +501,18 @@ impl App {
         }
 
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-            if self.filter_editing {
+            if self.seek_editing {
+                self.cancel_seek();
+            } else if self.filter_editing {
                 self.clear_filter();
             } else {
                 self.quit = true;
             }
+            return;
+        }
+
+        if self.seek_editing {
+            self.handle_seek_key(key);
             return;
         }
 
@@ -578,6 +593,10 @@ impl App {
             }
             KeyCode::Char('p') if !ctrl => {
                 self.prev_track();
+                return;
+            }
+            KeyCode::Char('t') if !ctrl => {
+                self.open_seek();
                 return;
             }
             KeyCode::Char('h') if !ctrl => {
@@ -758,6 +777,50 @@ impl App {
             }
             Ok(())
         });
+    }
+
+    fn open_seek(&mut self) {
+        self.message = None;
+        self.number_buffer.clear();
+        self.seek_buffer.clear();
+        self.seek_editing = true;
+    }
+
+    fn cancel_seek(&mut self) {
+        self.seek_editing = false;
+        self.seek_buffer.clear();
+    }
+
+    fn handle_seek_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => self.cancel_seek(),
+            KeyCode::Enter => self.apply_seek(),
+            KeyCode::Backspace => {
+                self.seek_buffer.pop();
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.seek_buffer.clear();
+            }
+            KeyCode::Char(character)
+                if (character.is_ascii_digit() || matches!(character, '+' | '-' | '.' | '%'))
+                    && self.seek_buffer.len() < 16 =>
+            {
+                self.seek_buffer.push(character);
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_seek(&mut self) {
+        let value = std::mem::take(&mut self.seek_buffer);
+        self.seek_editing = false;
+        let value = value.trim().to_string();
+        if value.is_empty() {
+            return;
+        }
+        if self.act(|client| player::seek_client(client, &value)) {
+            self.show_message(format!("seek {value}"));
+        }
     }
 
     fn seek_relative(&mut self, seconds: f64) {
@@ -1270,6 +1333,18 @@ impl App {
     }
 
     fn draw_message(&mut self, frame: &mut Frame, area: ratatui::layout::Rect) {
+        if self.seek_editing {
+            frame.render_widget(
+                Paragraph::new(format!(
+                    "seek: {}█   Enter apply · Esc cancel",
+                    self.seek_buffer
+                ))
+                .style(Style::default().fg(Color::Yellow)),
+                area,
+            );
+            return;
+        }
+
         if let Some((message, at)) = &self.message {
             if at.elapsed() < Duration::from_secs(3) {
                 frame.render_widget(
@@ -1344,11 +1419,11 @@ fn help_lines(focus: Focus, width: u16) -> Vec<Line<'static>> {
     if width >= 70 {
         match focus {
             Focus::NowPlaying => vec![
-                Line::from("space pause  j/k next/prev  h/l 10s  H/L 60s  -/+ vol"),
+                Line::from("space pause  j/k next/prev  h/l 10s  H/L 60s  t seek  -/+ vol"),
                 Line::from("s/r/m  x  o/b play  a add  v viz  Tab queue  / filter  f open  q/Q"),
             ],
             Focus::Queue => vec![
-                Line::from("j/k move  Ctrl-d/u half  Ctrl-f/b page  Enter play"),
+                Line::from("j/k move  Ctrl-d/u half  Ctrl-f/b page  t seek  Enter play"),
                 Line::from(
                     "N+Enter/G jump  space pause  x stop  / filter  o/a  v viz  f open  Tab",
                 ),
@@ -1357,11 +1432,11 @@ fn help_lines(focus: Focus, width: u16) -> Vec<Line<'static>> {
     } else {
         match focus {
             Focus::NowPlaying => vec![
-                Line::from("space j/k h/l H/L -/+"),
+                Line::from("space j/k h/l H/L -/+ t seek"),
                 Line::from("s r m x f o/b a v Tab / q/Q"),
             ],
             Focus::Queue => vec![
-                Line::from("j/k ^d/^u ^f/^b Enter"),
+                Line::from("j/k ^d/^u ^f/^b Enter t seek"),
                 Line::from("N+↵/G jump  space x / o a v Tab q/Q"),
             ],
         }
@@ -1736,6 +1811,8 @@ mod layout_fuzz_tests {
                 filter_editing: rng.boolean(),
                 filtered,
                 number_buffer: rng.string(6),
+                seek_editing: rng.boolean(),
+                seek_buffer: rng.string(12),
                 picker: Picker::halfblocks(),
                 cover_key: None,
                 cover_pending: None,
@@ -1924,6 +2001,37 @@ mod key_tests {
 
         app.handle_key(key(KeyCode::Esc));
         assert_eq!(app.focus, Focus::NowPlaying);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn seek_prompt_edits_applies_and_cancels() {
+        let (mut app, base) = app_with_items(&["alpha"]);
+
+        app.handle_key(key(KeyCode::Char('1')));
+        app.handle_key(key(KeyCode::Char('t')));
+        assert!(app.seek_editing);
+        assert_eq!(app.number_buffer, "");
+
+        for character in ['-', '3', '0', '%'] {
+            app.handle_key(key(KeyCode::Char(character)));
+        }
+        assert_eq!(app.seek_buffer, "-30%");
+        app.handle_key(key(KeyCode::Backspace));
+        assert_eq!(app.seek_buffer, "-30");
+        app.handle_key(key(KeyCode::Esc));
+        assert!(!app.seek_editing);
+        assert_eq!(app.seek_buffer, "");
+
+        app.handle_key(key(KeyCode::Char('t')));
+        for character in ['5', '0', '%'] {
+            app.handle_key(key(KeyCode::Char(character)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        assert!(!app.seek_editing);
+        assert_eq!(app.seek_buffer, "");
+        assert!(app.message.is_some());
 
         let _ = std::fs::remove_dir_all(&base);
     }

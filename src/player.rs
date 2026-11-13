@@ -560,7 +560,19 @@ pub fn volume(config: &Config, value: &str) -> Result<()> {
 }
 
 pub fn seek(config: &Config, value: &str) -> Result<()> {
-    let command = if let Some(percent) = value.strip_suffix('%') {
+    let command = seek_command(value)?;
+    let mut client = connect(config)?;
+    client.command_values(command)?;
+    Ok(())
+}
+
+pub fn seek_client(client: &mut Mpv, value: &str) -> Result<()> {
+    client.command_values(seek_command(value)?)?;
+    Ok(())
+}
+
+fn seek_command(value: &str) -> Result<Vec<serde_json::Value>> {
+    Ok(if let Some(percent) = value.strip_suffix('%') {
         let amount = parse_number(percent, "seek")?;
         vec![json!("seek"), json!(amount), json!("absolute-percent")]
     } else if let Some(relative) = value.strip_prefix('+') {
@@ -572,11 +584,7 @@ pub fn seek(config: &Config, value: &str) -> Result<()> {
     } else {
         let amount = parse_number(value, "seek")?;
         vec![json!("seek"), json!(amount), json!("absolute")]
-    };
-
-    let mut client = connect(config)?;
-    client.command_values(command)?;
-    Ok(())
+    })
 }
 
 pub fn shuffle(config: &Config, mode: Option<&str>) -> Result<()> {
@@ -676,6 +684,32 @@ mod tests {
         assert_eq!(format_time(Some(5.9)), "0:05");
         assert_eq!(format_time(Some(65.0)), "1:05");
         assert_eq!(format_time(Some(3725.0)), "1:02:05");
+    }
+
+    #[test]
+    fn builds_seek_commands() {
+        assert_eq!(
+            seek_command("90").unwrap(),
+            vec![json!("seek"), json!(90.0), json!("absolute")]
+        );
+        assert_eq!(
+            seek_command("+30").unwrap(),
+            vec![json!("seek"), json!(30.0), json!("relative")]
+        );
+        assert_eq!(
+            seek_command("-15").unwrap(),
+            vec![json!("seek"), json!(-15.0), json!("relative")]
+        );
+        assert_eq!(
+            seek_command("50%").unwrap(),
+            vec![json!("seek"), json!(50.0), json!("absolute-percent")]
+        );
+        assert_eq!(
+            seek_command("+7.5").unwrap(),
+            vec![json!("seek"), json!(7.5), json!("relative")]
+        );
+        assert!(seek_command("nope").is_err());
+        assert!(seek_command("inf").is_err());
     }
 
     #[test]

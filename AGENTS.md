@@ -53,7 +53,7 @@ Current playback/queue mapping:
 | next/previous | `next`, `prev` | `n`, `p`, `j`, `k` |
 | stop (keep mpv) | `stop` | `x` |
 | mute | `mute [on\|off\|toggle]` | `m` |
-| seek | `seek N\|-N\|N%` | `h`/`l` 10s, `H`/`L` 60s, arrows |
+| seek | `seek N\|-N\|N%` | `h`/`l` 10s, `H`/`L` 60s, arrows, `t` prompt |
 | volume | `volume N\|+N\|-N` | `-`, `+`, arrows |
 | shuffle | `shuffle [on\|off\|toggle]` | `s` |
 | repeat | `repeat [off\|all\|one]` | `r` |

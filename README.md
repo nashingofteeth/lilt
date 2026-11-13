@@ -205,6 +205,7 @@ open.
 | `x` | stop playback (keep mpv running) |
 | `h` / `l` | seek −10s / +10s |
 | `H` / `L` | seek −60s / +60s |
+| `t` | seek prompt: `N`, `+N`, `-N`, or `N%` |
 | `-` / `+` | volume −5 / +5 |
 | `s` / `r` / `m` | shuffle / repeat / mute |
 | `o` (or `b`) | browse library or NTS → play now (replace queue) |
