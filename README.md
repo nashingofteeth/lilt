@@ -172,6 +172,10 @@ the mpv error plus relevant lines from `mpv.log`.
 `browse` returns as soon as you make a selection: it hands the queue to the
 detached mpv daemon and exits, so the picker window closes immediately.
 
+Library artists and albums are listed newest-first by directory mtime, which
+tracks when albums or discs were added. Filtering keeps that order. Choosing
+`[whole artist]` plays albums in the same newest-first order.
+
 ### Control panel
 
 `lilt panel` is a ratatui UI with three panes:
