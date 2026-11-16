@@ -82,6 +82,8 @@ overlay. Keep them short, accurate, and in sync with the README.
 - `queue::Input` distinguishes local paths from URLs; URL-only playback must not
   require the rclone mount.
 - Keep YouTube audio-only with `--ytdl-format=bestaudio/best`.
+- Bandcamp album/track/artist URLs use yt-dlp and require yt-dlp 2026.10.26 or
+  newer; support public releases only. Add no Bandcamp-specific picker/search.
 - URL covers come from `yt-dlp` in `cover::load_url` and are cached under
   `cache_dir/covers`; playlist entries get per-video thumbnails.
 - NTS Radio station/show metadata and artwork come from the public NTS API via

@@ -19,7 +19,8 @@ keys and MPRIS panels work too.
 
 - `mpv`, `rclone`
 - `fzf` for `lilt browse`
-- `yt-dlp` for YouTube playback and thumbnail covers
+- `yt-dlp` for YouTube and Bandcamp playback and thumbnail covers (YouTube:
+  any recent release; Bandcamp: 2026.10.26 or newer)
 - `curl` for NTS Radio metadata and mixtape artwork
 - `tail` for `lilt logs -f`
 - optional: `mpv-mpris` for hardware media keys (Linux)
@@ -136,6 +137,20 @@ lilt play 'https://www.youtube.com/watch?v=...'
 lilt play 'https://www.youtube.com/playlist?list=...'
 lilt add 'https://example.com/stream.mp3' 'https://youtu.be/...'
 ```
+
+### Bandcamp
+
+Public Bandcamp album, track, and artist URLs play through yt-dlp:
+
+```sh
+lilt play 'https://artist.bandcamp.com/album/...'
+lilt add 'https://artist.bandcamp.com/track/...'
+```
+
+Album and artist URLs expand into individual queue entries, with Bandcamp
+artist/album/title metadata and thumbnails. Bandcamp requires yt-dlp 2026.10.26
+or newer; older releases fail to extract album data. Only public releases are
+supported, without cookies or purchased/private content.
 
 ### NTS Radio
 

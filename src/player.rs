@@ -1,6 +1,7 @@
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use serde_json::json;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crate::config::Config;
@@ -9,6 +10,8 @@ use crate::mpv::{self, Mpv, Repeat, Status};
 use crate::nts;
 use crate::platform;
 use crate::queue;
+
+const MIN_BANDCAMP_YTDL_VERSION: (u32, u32, u32) = (2026, 10, 26);
 
 pub fn format_time(value: Option<f64>) -> String {
     match value {
@@ -285,6 +288,9 @@ pub fn add(config: &Config, inputs: &[String]) -> Result<()> {
 
 /// Resolve a local path or URL, falling back to an NTS live/mixtape name.
 fn resolve_source(config: &Config, input: &str) -> Result<queue::Input> {
+    if queue::is_bandcamp_url(input) {
+        ensure_bandcamp_ytdl()?;
+    }
     if nts::is_episode_url(input) {
         // Best effort: use the NTS API for show/episode metadata while still
         // letting mpv/yt-dlp resolve the actual audio stream.
@@ -303,6 +309,36 @@ fn resolve_source(config: &Config, input: &str) -> Result<queue::Input> {
             }
         }
     }
+}
+
+/// Bandcamp extraction was broken in yt-dlp releases before 2026.10.26.
+fn ensure_bandcamp_ytdl() -> Result<()> {
+    let output = Command::new("yt-dlp")
+        .arg("--version")
+        .output()
+        .context("running yt-dlp (required for Bandcamp playback)")?;
+    if !output.status.success() {
+        bail!("yt-dlp --version failed; Bandcamp playback requires yt-dlp 2026.10.26 or newer");
+    }
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if let Some(parsed) = parse_ytdl_version(&version)
+        && parsed < MIN_BANDCAMP_YTDL_VERSION
+    {
+        let (major, minor, patch) = MIN_BANDCAMP_YTDL_VERSION;
+        bail!(
+            "Bandcamp playback requires yt-dlp {major}.{minor}.{patch} or newer (found {version}); upgrade yt-dlp and try again"
+        );
+    }
+    Ok(())
+}
+
+fn parse_ytdl_version(value: &str) -> Option<(u32, u32, u32)> {
+    let mut parts = value.trim().split('.').take(3);
+    Some((
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+    ))
 }
 
 /// NTS names have no path separators or extensions, so path typos do not
@@ -704,6 +740,14 @@ mod tests {
         assert_eq!(format_time(Some(5.9)), "0:05");
         assert_eq!(format_time(Some(65.0)), "1:05");
         assert_eq!(format_time(Some(3725.0)), "1:02:05");
+    }
+
+    #[test]
+    fn parses_yt_dlp_versions() {
+        assert_eq!(parse_ytdl_version("2026.10.26"), Some((2026, 10, 26)));
+        assert_eq!(parse_ytdl_version("2026.10.26.123"), Some((2026, 10, 26)));
+        assert_eq!(parse_ytdl_version("2026.08.19"), Some((2026, 8, 19)));
+        assert_eq!(parse_ytdl_version("nightly"), None);
     }
 
     #[test]

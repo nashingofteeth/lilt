@@ -48,6 +48,21 @@ pub fn external_url(input: &str) -> Option<&str> {
     is_url(input).then_some(input)
 }
 
+/// True for Bandcamp pages (`bandcamp.com` and artist subdomains), not for
+/// Bandcamp's `bcbits.com` media hosts.
+pub fn is_bandcamp_url(input: &str) -> bool {
+    let Some(url) = external_url(input) else {
+        return false;
+    };
+    let Some((_, rest)) = url.split_once("://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    let host = host.split(':').next().unwrap_or(host).to_ascii_lowercase();
+    host == "bandcamp.com" || host.ends_with(".bandcamp.com")
+}
+
 /// Resolve a CLI input to either a URL or a local path.
 pub fn resolve_input(config: &Config, input: &str) -> Result<Input> {
     if is_url(input) {
@@ -162,6 +177,21 @@ mod tests {
         assert!(!is_url("https://"));
         assert!(!is_url("Artist/Album/Track.flac"));
         assert!(!is_url("C:/Music/track.flac"));
+    }
+
+    #[test]
+    fn recognises_bandcamp_pages() {
+        assert!(is_bandcamp_url(
+            "https://lensflare1.bandcamp.com/album/drone-winter-ambient-sessions"
+        ));
+        assert!(is_bandcamp_url("https://bandcamp.com/"));
+        assert!(is_bandcamp_url(
+            "ytdl://https://artist.bandcamp.com/track/song"
+        ));
+        assert!(!is_bandcamp_url("https://f4.bcbits.com/img/cover.jpg"));
+        assert!(!is_bandcamp_url("https://example.com/bandcamp.com"));
+        assert!(!is_bandcamp_url("https://bandcamp.com.evil.example/"));
+        assert!(!is_bandcamp_url("/music/bandcamp.com"));
     }
 
     #[test]
