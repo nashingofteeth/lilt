@@ -174,7 +174,8 @@ detached mpv daemon and exits, so the picker window closes immediately.
 
 Library artists and albums are listed newest-first by directory mtime, which
 tracks when albums or discs were added. Filtering keeps that order. Choosing
-`[whole artist]` plays albums in the same newest-first order.
+`[whole artist]` plays albums in the same newest-first order. Loose audio files
+at the library root or an artist root are listed too.
 
 ### Control panel
 

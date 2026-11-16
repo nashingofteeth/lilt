@@ -41,6 +41,14 @@ pub fn pick(config: &Config, include_all: bool) -> Result<Option<Selection>> {
             path.file_name()
                 .map(|name| name.to_string_lossy().into_owned())
         }));
+        choices.extend(
+            list_audio_files(&config.music_dir)?
+                .iter()
+                .filter_map(|path| {
+                    path.file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                }),
+        );
     } else {
         choices.push(LOCAL_ENTRY.to_string());
     }
@@ -74,16 +82,24 @@ pub fn pick(config: &Config, include_all: bool) -> Result<Option<Selection>> {
 
     mount::ensure_mount(config)?;
     let artist_path = config.music_dir.join(&choice);
+    if artist_path.is_file() {
+        return Ok(Some(Selection::Local(vec![artist_path])));
+    }
     if !artist_path.is_dir() {
         bail!("no such artist: {choice}");
     }
     let albums = list_dirs(&artist_path)?;
-    if albums.is_empty() {
+    let loose = list_audio_files(&artist_path)?;
+    if albums.is_empty() && loose.is_empty() {
         return Ok(Some(Selection::Local(vec![artist_path])));
     }
 
     let mut album_choices = vec!["[whole artist]".to_string()];
     album_choices.extend(albums.iter().filter_map(|path| {
+        path.file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+    }));
+    album_choices.extend(loose.iter().filter_map(|path| {
         path.file_name()
             .map(|name| name.to_string_lossy().into_owned())
     }));
@@ -137,6 +153,28 @@ fn list_dirs(path: &Path) -> Result<Vec<PathBuf>> {
     Ok(sort_dirs_by_added(dirs))
 }
 
+fn list_audio_files(path: &Path) -> Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(path)
+        .with_context(|| format!("reading {}", path.display()))?
+        .flatten()
+    {
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
+        if entry
+            .file_type()
+            .map(|kind| kind.is_file())
+            .unwrap_or(false)
+            && crate::queue::is_audio(&entry.path())
+        {
+            files.push(entry.path());
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
 fn sort_dirs_by_added(dirs: Vec<PathBuf>) -> Vec<PathBuf> {
     let mut ranked: Vec<(SystemTime, PathBuf)> = dirs
         .into_iter()
@@ -183,21 +221,7 @@ fn modified(path: &Path) -> SystemTime {
 /// picker. Loose audio files in the artist directory are appended in name order.
 fn artist_inputs(artist: &Path) -> Vec<PathBuf> {
     let mut inputs = list_dirs(artist).unwrap_or_default();
-    if let Ok(entries) = std::fs::read_dir(artist) {
-        let mut loose: Vec<PathBuf> = entries
-            .flatten()
-            .filter(|entry| {
-                entry
-                    .file_type()
-                    .map(|kind| kind.is_file())
-                    .unwrap_or(false)
-            })
-            .map(|entry| entry.path())
-            .filter(|path| crate::queue::is_audio(path))
-            .collect();
-        loose.sort();
-        inputs.extend(loose);
-    }
+    inputs.extend(list_audio_files(artist).unwrap_or_default());
     if inputs.is_empty() {
         vec![artist.to_path_buf()]
     } else {
@@ -291,6 +315,9 @@ mod tests {
         // Whole-artist expansion follows the same album order, then loose files.
         let loose = artist.join("loose.flac");
         std::fs::write(&loose, b"").unwrap();
+        std::fs::write(artist.join("cover.jpg"), b"").unwrap();
+        std::fs::write(artist.join(".hidden.flac"), b"").unwrap();
+        assert_eq!(list_audio_files(&artist).unwrap(), vec![loose.clone()]);
         let inputs: Vec<PathBuf> = artist_inputs(&artist);
         assert_eq!(inputs.last(), Some(&loose));
         assert_eq!(inputs.len(), 4);
