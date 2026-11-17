@@ -19,6 +19,7 @@ fn rclone_args(config: &Config) -> Vec<std::ffi::OsString> {
         config.music_dir.clone().into_os_string(),
         "--read-only".into(),
         "--dir-cache-time=10m".into(),
+        "--attr-timeout=1m".into(),
     ];
     // Avoid AppleDouble sidecar traffic; the library is read-only anyway.
     if cfg!(target_os = "macos") {

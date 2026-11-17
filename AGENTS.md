@@ -7,9 +7,10 @@ and the ratatui control panel (`lilt panel`) are two front ends for the same
 queue and playback state. The installed binary is `lilt`; a temporary `music`
 alias and legacy config/env fallbacks exist for migration.
 
-Library pickers order artists and albums newest-first by directory mtime, and
-`[whole artist]` expands in the same order. Use directory mtimes rather than
-stat-ing every track; a full file walk is slow over the rclone mount.
+Library pickers order artists and albums newest-first by the directory's own
+mtime, and `[whole artist]` expands in the same order. Do not recursively walk
+descendant directories to rank items; the rclone mount makes that slow. Reuse
+the album list already built by the picker when expanding `[whole artist]`.
 
 Linux and macOS are supported. Keep OS-specific process and mount commands in
 `src/platform.rs` instead of spreading `cfg` blocks through the rest of the

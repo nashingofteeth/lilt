@@ -319,7 +319,7 @@ would be a local rclone VFS cache rather than larger demux buffers.
 
 ## How it works
 
-- `rclone mount <remote> <music_dir> --read-only --dir-cache-time=10m`
+- `rclone mount <remote> <music_dir> --read-only --dir-cache-time=10m --attr-timeout=1m`
 - one detached mpv process:
   `mpv --idle --no-video --no-terminal --input-ipc-server=…/mpv.sock`
 - the Rust binary talks to mpv over JSON on the Unix socket; all commands and

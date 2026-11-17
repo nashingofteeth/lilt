@@ -120,7 +120,7 @@ pub fn pick(config: &Config, include_all: bool) -> Result<Option<Selection>> {
     }
 
     if picks.iter().any(|choice| choice == "[whole artist]") {
-        return Ok(Some(Selection::Local(artist_inputs(&artist_path))));
+        return Ok(Some(Selection::Local(artist_inputs(&artist_path, albums))));
     }
 
     let paths: Vec<PathBuf> = picks
@@ -176,39 +176,14 @@ fn list_audio_files(path: &Path) -> Result<Vec<PathBuf>> {
 }
 
 fn sort_dirs_by_added(dirs: Vec<PathBuf>) -> Vec<PathBuf> {
+    // Directory mtimes update when entries are added. Using the direct mtime
+    // avoids recursively walking every album/disc just to sort the parent.
     let mut ranked: Vec<(SystemTime, PathBuf)> = dirs
         .into_iter()
-        .map(|path| (newest_dir_mtime(&path), path))
+        .map(|path| (modified(&path), path))
         .collect();
     ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
     ranked.into_iter().map(|(_, path)| path).collect()
-}
-
-/// Newest timestamp among a directory and its descendant directories.
-/// Directory mtimes update when entries are added, so this tracks library
-/// additions without walking (and stat-ing) every audio file.
-fn newest_dir_mtime(path: &Path) -> SystemTime {
-    let mut newest = modified(path);
-    let mut pending = vec![path.to_path_buf()];
-    while let Some(dir) = pending.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            if entry.file_name().to_string_lossy().starts_with('.') {
-                continue;
-            }
-            let Ok(kind) = entry.file_type() else {
-                continue;
-            };
-            if !kind.is_dir() {
-                continue;
-            }
-            newest = newest.max(modified(&entry.path()));
-            pending.push(entry.path());
-        }
-    }
-    newest
 }
 
 fn modified(path: &Path) -> SystemTime {
@@ -219,13 +194,12 @@ fn modified(path: &Path) -> SystemTime {
 
 /// Expand a whole artist in the same newest-first album order shown by the
 /// picker. Loose audio files in the artist directory are appended in name order.
-fn artist_inputs(artist: &Path) -> Vec<PathBuf> {
-    let mut inputs = list_dirs(artist).unwrap_or_default();
-    inputs.extend(list_audio_files(artist).unwrap_or_default());
-    if inputs.is_empty() {
+fn artist_inputs(artist: &Path, mut albums: Vec<PathBuf>) -> Vec<PathBuf> {
+    albums.extend(list_audio_files(artist).unwrap_or_default());
+    if albums.is_empty() {
         vec![artist.to_path_buf()]
     } else {
-        inputs
+        albums
     }
 }
 
@@ -310,7 +284,7 @@ mod tests {
             .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
             .collect();
         assert_eq!(names, ["A", "B", "C"]);
-        assert!(newest_dir_mtime(&artist.join("A")) > SystemTime::UNIX_EPOCH);
+        assert!(modified(&artist.join("A")) > SystemTime::UNIX_EPOCH);
 
         // Whole-artist expansion follows the same album order, then loose files.
         let loose = artist.join("loose.flac");
@@ -318,7 +292,8 @@ mod tests {
         std::fs::write(artist.join("cover.jpg"), b"").unwrap();
         std::fs::write(artist.join(".hidden.flac"), b"").unwrap();
         assert_eq!(list_audio_files(&artist).unwrap(), vec![loose.clone()]);
-        let inputs: Vec<PathBuf> = artist_inputs(&artist);
+        let albums = list_dirs(&artist).unwrap();
+        let inputs: Vec<PathBuf> = artist_inputs(&artist, albums);
         assert_eq!(inputs.last(), Some(&loose));
         assert_eq!(inputs.len(), 4);
 
