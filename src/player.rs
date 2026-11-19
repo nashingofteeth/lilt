@@ -5,6 +5,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use crate::config::Config;
+use crate::durations;
 use crate::mount;
 use crate::mpv::{self, Mpv, Repeat, Status};
 use crate::nts;
@@ -166,6 +167,12 @@ pub fn queue(config: &Config) -> Result<()> {
         .ok()
         .and_then(|value| value.as_i64())
         .unwrap_or(-1);
+    let time_pos = client.get("time-pos").ok().and_then(|value| value.as_f64());
+    durations::remember(
+        config,
+        &path,
+        client.get("duration").ok().and_then(|value| value.as_f64()),
+    );
     let entries = client.playlist()?;
 
     if entries.is_empty() {
@@ -173,6 +180,8 @@ pub fn queue(config: &Config) -> Result<()> {
         return Ok(());
     }
 
+    let lengths = durations::resolve(config, &entries, true);
+    let totals = durations::totals(&lengths);
     let nts = nts::cached_stations(config);
     for (index, entry) in entries.iter().enumerate() {
         let marker = if index as i64 == current { ">" } else { " " };
@@ -184,9 +193,44 @@ pub fn queue(config: &Config) -> Result<()> {
                 .clone()
                 .unwrap_or_else(|| display_name(&entry.filename))
         };
-        println!("{marker} {:>4}  {name}", index + 1);
+        let length = lengths
+            .get(index)
+            .copied()
+            .flatten()
+            .map(|seconds| format_time(Some(seconds)))
+            .unwrap_or_else(|| "--:--".to_string());
+        println!("{marker} {:>4}  {length:>7}  {name}", index + 1);
     }
+    println!(
+        "{}",
+        queue_summary(
+            entries.len(),
+            totals,
+            durations::elapsed(&lengths, current, time_pos)
+        )
+    );
     Ok(())
+}
+
+fn queue_summary(count: usize, totals: durations::Totals, elapsed: Option<(f64, usize)>) -> String {
+    let mut line = format!("{count} track(s)");
+    if totals.seconds <= 0.0 {
+        if totals.missing > 0 {
+            line.push_str(" · duration unknown");
+        }
+        return line;
+    }
+
+    line.push_str(&format!(" · {} total", totals.label()));
+    let Some((seconds, missing)) = elapsed else {
+        return line;
+    };
+    line.push_str(&format!(" · {} played", format_time(Some(seconds))));
+    if missing == 0 && totals.complete() {
+        let percent = (seconds / totals.seconds * 100.0).clamp(0.0, 100.0);
+        line.push_str(&format!(" ({:.0}%)", percent.floor()));
+    }
+    line
 }
 
 pub fn play(config: &Config, inputs: &[String], shuffle: bool) -> Result<()> {
@@ -740,6 +784,36 @@ mod tests {
         assert_eq!(format_time(Some(5.9)), "0:05");
         assert_eq!(format_time(Some(65.0)), "1:05");
         assert_eq!(format_time(Some(3725.0)), "1:02:05");
+    }
+
+    #[test]
+    fn summarizes_queue_length_and_progress() {
+        let totals = durations::Totals {
+            seconds: 600.0,
+            missing: 0,
+        };
+        assert_eq!(
+            queue_summary(5, totals, Some((150.0, 0))),
+            "5 track(s) · 10:00 total · 2:30 played (25%)"
+        );
+
+        let partial = durations::Totals {
+            seconds: 600.0,
+            missing: 2,
+        };
+        assert_eq!(
+            queue_summary(5, partial, Some((150.0, 0))),
+            "5 track(s) · 10:00+ total · 2:30 played"
+        );
+
+        let unknown = durations::Totals {
+            seconds: 0.0,
+            missing: 3,
+        };
+        assert_eq!(
+            queue_summary(3, unknown, Some((0.0, 0))),
+            "3 track(s) · duration unknown"
+        );
     }
 
     #[test]

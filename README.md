@@ -117,8 +117,12 @@ Playback
 ```
 
 `lilt queue` prints one numbered track per line, with `>` marking the current
-track; `lilt list` is an alias. `lilt resume` and `lilt toggle` restart the
-queue from the beginning when playback has ended.
+track; `lilt list` is an alias. Track lengths are shown when known, and a
+summary line reports the queue's total runtime and how much has been played.
+Local lengths are read once and cached under `~/.cache/lilt`; URL queues fill
+them from yt-dlp metadata (one request per album or playlist). A `+` marks a
+partial total when some entries have no known duration yet. `lilt resume` and
+`lilt toggle` restart the queue from the beginning when playback has ended.
 
 `lilt shuffle on` reorders the existing queue while keeping the current track.
 `lilt shuffle off` disables randomization, restores the original queue order,
@@ -198,7 +202,9 @@ at the library root or an artist root are listed too.
 
 - **Now Playing** — artist/album, title, progress, volume/shuffle/repeat.
 - **Spectrum** — live bars from the music player’s output (`v` toggles it).
-- **Queue** — always visible, with the current track marked.
+- **Queue** — always visible, with the current track marked and the queue's
+  total runtime in the title. The Now Playing pane shows queue progress
+  (`3/12 · 8:20 / 42:10`) next to the track position.
 
 `Tab` switches focus between Now Playing and Queue; the focused pane's border
 is cyan and the other is dim. If the queue is empty when the panel opens, it

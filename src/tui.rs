@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 use crate::browse;
 use crate::config::Config;
 use crate::cover;
+use crate::durations;
 use crate::mount;
 use crate::mpv::{self, Mpv, PlaylistEntry, Repeat, Status};
 use crate::nts;
@@ -143,6 +144,10 @@ struct App {
     nts_refresh_at: Option<Instant>,
     nts_refresh_pending: Option<Receiver<()>>,
     nts_refresh_path: Option<String>,
+    queue_durations: Vec<Option<f64>>,
+    durations_signature: Option<u64>,
+    durations_pending: Option<(u64, Receiver<Vec<Option<f64>>>)>,
+    remembered_duration: Option<(String, f64)>,
     picker: Picker,
     cover_key: Option<CoverKey>,
     cover_pending: Option<(CoverKey, Receiver<Option<DynamicImage>>)>,
@@ -183,6 +188,10 @@ impl App {
             nts_refresh_at: None,
             nts_refresh_pending: None,
             nts_refresh_path: None,
+            queue_durations: Vec::new(),
+            durations_signature: None,
+            durations_pending: None,
+            remembered_duration: None,
             picker,
             cover_key: None,
             cover_pending: None,
@@ -296,6 +305,7 @@ impl App {
         }
 
         self.sync_nts_metadata();
+        self.sync_durations();
         self.sync_cover();
 
         if self.visualizer_ready {
@@ -348,6 +358,61 @@ impl App {
             self.nts_refresh_pending = Some(receiver);
             self.nts_refresh_at =
                 Some(Instant::now() + Duration::from_secs(nts::LIVE_REFRESH_SECS));
+        }
+    }
+
+    fn sync_durations(&mut self) {
+        if let Some((signature, receiver)) = self.durations_pending.take() {
+            match receiver.try_recv() {
+                Ok(mut values) => {
+                    // Ignore a result that belongs to a queue that has since
+                    // been replaced.
+                    if durations::signature(&self.playlist) == signature {
+                        // mpv may have reported a length while the probe was
+                        // running; keep it even when the cache read missed it.
+                        if let Some((path, seconds)) = self.remembered_duration.clone() {
+                            fill_duration(&mut values, &self.playlist, &path, seconds);
+                        }
+                        self.queue_durations = values;
+                        self.durations_signature = Some(signature);
+                    }
+                }
+                Err(TryRecvError::Empty) => {
+                    self.durations_pending = Some((signature, receiver));
+                }
+                Err(TryRecvError::Disconnected) => {}
+            }
+        }
+
+        let signature = durations::signature(&self.playlist);
+        let pending = self
+            .durations_pending
+            .as_ref()
+            .map(|(signature, _)| *signature);
+        if self.durations_signature != Some(signature) && pending != Some(signature) {
+            self.queue_durations.clear();
+            let config = self.config.clone();
+            let entries = self.playlist.clone();
+            let (sender, receiver) = mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = sender.send(durations::resolve(&config, &entries, true));
+            });
+            self.durations_pending = Some((signature, receiver));
+        }
+
+        // mpv reports the current track's length even when the file header is
+        // not readable, so learn URL and odd-format durations as they play.
+        if let Some(seconds) = self.status.duration {
+            let path = self.status.path.clone();
+            let remembered = self
+                .remembered_duration
+                .as_ref()
+                .is_some_and(|(known, value)| known == &path && (*value - seconds).abs() < 1.0);
+            if !path.is_empty() && !remembered {
+                durations::remember(&self.config, &path, Some(seconds));
+                fill_duration(&mut self.queue_durations, &self.playlist, &path, seconds);
+                self.remembered_duration = Some((path, seconds));
+            }
         }
     }
 
@@ -1231,8 +1296,15 @@ impl App {
         );
 
         let queue = if self.status.playlist_count > 0 && self.status.playlist_pos >= 0 {
+            let progress = queue_progress_label(
+                &self.queue_durations,
+                self.status.playlist_pos,
+                self.status.time_pos,
+            )
+            .map(|progress| format!(" · {progress}"))
+            .unwrap_or_default();
             format!(
-                "  ({}/{})",
+                "  ({}/{}{progress})",
                 self.status.playlist_pos + 1,
                 self.status.playlist_count
             )
@@ -1318,13 +1390,15 @@ impl App {
 
     fn draw_queue(&mut self, frame: &mut Frame, area: Rect) {
         let focused = self.focus == Focus::Queue;
+        let total = queue_total_label(&self.queue_durations);
         let title = if self.filter_query.is_empty() {
-            format!(" queue — {} track(s) ", self.items.len())
+            format!(" queue — {} track(s){} ", self.items.len(), total)
         } else {
             format!(
-                " queue — {}/{} track(s) ",
+                " queue — {}/{} track(s){} ",
                 self.filtered.len(),
-                self.items.len()
+                self.items.len(),
+                total
             )
         };
         let block = Block::bordered()
@@ -1509,6 +1583,41 @@ fn help_lines(focus: Focus, width: u16) -> Vec<Line<'static>> {
             ],
         }
     }
+}
+
+fn fill_duration(lengths: &mut [Option<f64>], entries: &[PlaylistEntry], path: &str, seconds: f64) {
+    for (entry, value) in entries.iter().zip(lengths.iter_mut()) {
+        if entry.filename == path {
+            *value = Some(seconds);
+        }
+    }
+}
+
+/// ` · 24:03` suffix for the queue pane title, empty until durations resolve.
+fn queue_total_label(lengths: &[Option<f64>]) -> String {
+    let totals = durations::totals(lengths);
+    if totals.seconds <= 0.0 {
+        return String::new();
+    }
+    format!(" · {}", totals.label())
+}
+
+/// `1:24 / 24:03+` progress through the whole queue.
+fn queue_progress_label(
+    lengths: &[Option<f64>],
+    position: i64,
+    time_pos: Option<f64>,
+) -> Option<String> {
+    let totals = durations::totals(lengths);
+    if totals.seconds <= 0.0 {
+        return None;
+    }
+    let (elapsed, _) = durations::elapsed(lengths, position, time_pos)?;
+    Some(format!(
+        "{} / {}",
+        player::format_time(Some(elapsed)),
+        totals.label()
+    ))
 }
 
 fn progress_line(
@@ -1700,6 +1809,22 @@ mod progress_tests {
     }
 
     #[test]
+    fn queue_labels_show_total_and_progress() {
+        let lengths = [Some(60.0), Some(90.0), None];
+        assert_eq!(queue_total_label(&lengths), " · 2:30+");
+        assert_eq!(
+            queue_progress_label(&lengths, 1, Some(15.0)),
+            Some("1:15 / 2:30+".to_string())
+        );
+        assert_eq!(
+            queue_progress_label(&lengths, 0, Some(0.0)),
+            Some("0:00 / 2:30+".to_string())
+        );
+        assert_eq!(queue_total_label(&[]), "");
+        assert_eq!(queue_progress_label(&[], 0, Some(0.0)), None);
+    }
+
+    #[test]
     fn progress_line_fills_available_width() {
         for width in [20, 40, 80] {
             let rendered = text(progress_line(width, Some(11.0), Some(303.0), false));
@@ -1817,6 +1942,7 @@ mod layout_fuzz_tests {
                 .map(|_| PlaylistEntry {
                     filename: rng.string(30),
                     title: Some(rng.string(30)),
+                    playlist_path: None,
                 })
                 .collect();
             let filtered: Vec<usize> = (0..count).filter(|_| rng.boolean()).collect();
@@ -1885,6 +2011,10 @@ mod layout_fuzz_tests {
                 nts_refresh_at: None,
                 nts_refresh_pending: None,
                 nts_refresh_path: None,
+                queue_durations: Vec::new(),
+                durations_signature: None,
+                durations_pending: None,
+                remembered_duration: None,
                 picker: Picker::halfblocks(),
                 cover_key: None,
                 cover_pending: None,
@@ -2042,6 +2172,7 @@ mod key_tests {
             .map(|item| PlaylistEntry {
                 filename: item.to_string(),
                 title: Some(item.to_string()),
+                playlist_path: None,
             })
             .collect();
         app.filtered = (0..items.len()).collect();
@@ -2251,6 +2382,7 @@ mod page_key_tests {
             .map(|item| PlaylistEntry {
                 filename: item.clone(),
                 title: Some(item.clone()),
+                playlist_path: None,
             })
             .collect();
         app.filtered = (0..items.len()).collect();

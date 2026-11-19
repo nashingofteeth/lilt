@@ -1,6 +1,7 @@
 mod browse;
 mod config;
 mod cover;
+mod durations;
 mod logs;
 mod mount;
 mod mpv;

@@ -98,6 +98,11 @@ overlay. Keep them short, accurate, and in sync with the README.
   cache-buster on `/api/v2/live` requests, or polling will keep returning the
   previous show. NTS artwork may be PNG even when cached with a `.jpg` name, so
   decode cover files by content.
+- Queue durations live in `~/.cache/lilt/durations.json`. Probe local files
+  with lofty (ffprobe fallback); fill URL entries from yt-dlp metadata or from
+  mpv as tracks play. Never cache NTS live stream lengths, because they change
+  with every show. Missing durations must produce a `+` partial marker rather
+  than a silently wrong total.
 - Surface mpv playback failures from `end-file` events and the mpv log.
 
 ## Style

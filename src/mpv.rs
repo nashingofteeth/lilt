@@ -50,6 +50,7 @@ pub struct Status {
 pub struct PlaylistEntry {
     pub filename: String,
     pub title: Option<String>,
+    pub playlist_path: Option<String>,
 }
 
 impl Mpv {
@@ -255,7 +256,15 @@ impl Mpv {
                     .get("title")
                     .and_then(Value::as_str)
                     .map(str::to_string);
-                entries.push(PlaylistEntry { filename, title });
+                let playlist_path = item
+                    .get("playlist-path")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                entries.push(PlaylistEntry {
+                    filename,
+                    title,
+                    playlist_path,
+                });
             }
         }
         Ok(entries)
